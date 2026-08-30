@@ -92,7 +92,11 @@ export function attachSettings(
     }
   })
 
-  return { current: () => resolved(), save, onChange }
+  return {
+    current: () => resolved(),
+    save: (patch) => save(patch),
+    onChange: (cb) => onChange(cb),
+  }
 }
 
 function messageOf(error: unknown): string {
