@@ -71,13 +71,17 @@ dsh plugin --profile web add link:E:/path/to/dsh-himarket
 
 ```sh
 pnpm install
-pnpm build        # tsc 编译 src → lib
-pnpm test         # 单元测试（node --test tests/）
+pnpm build        # tsc 编译 src → lib + esbuild 打包 client → lib/client.js
+pnpm test         # tsc + esbuild + node --test（单元测试）
 ```
 
 - host 端源码在 `src/`（TypeScript，编译到 `lib/`）。
-- 浏览器端 bundle 是手写 UMD，在 `lib/client/index.js`（不经过 tsdown/Vite，与 `dsh-plugin-hub` 同款）。
+- 浏览器端源码在 `src/client-main.js`（ES module，`import React`），由 `scripts/build-client.mjs` 用 esbuild 打包为 `lib/client.js`（`__ModuleLoader__.load` 格式，react 外部化），与 `dsh-matrix-agent` 同款。
 - 端到端冒烟：`node tests/mock-himarket.mjs 18080` 起假后端，再对运行中的 web 实例调 `/himarket/save-config`、`/himarket/sync`、`/himarket/install-skill`。
+
+## 发布
+
+推 `v*` tag（或手动触发）后，`.github/workflows/npm-publish.yml` 自动构建、测试、`npm publish` 并建 GitHub Release。需在仓库配 `NPM_TOKEN` secret。
 
 ## 已知限制
 

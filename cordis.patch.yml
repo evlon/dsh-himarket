@@ -1,0 +1,10 @@
+# dsh-himarket bundle layer: inserts the HiMarket bridge row into the composition.
+# The bridge publishes no service; it only consumes webServer/tools/settings, so it
+# sits loose in the host plane (same shape as dsh-matrix).
+- insert:
+    - id: himarket
+      name: dsh-himarket
+      config:
+        # 桥接包在运行时经 createRequire(ctx.baseUrl) 解析官方 @deepseek-ai/* 包，
+        # 无需在此声明它们；这里只放桥接自身可调的默认值。
+        skillInstallDir: ''
