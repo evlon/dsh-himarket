@@ -16,6 +16,8 @@ import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { HimarketClient } from './himarket-client.js'
+import { isPresetPackage, installPreset, defaultPresetRoot } from './preset.js'
+import type { PresetInstallResult } from './preset.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -82,16 +84,22 @@ export interface SkillInstallResult {
   name: string
   dir: string
   note: string
+  /** 岗位包安装结果（仅当该 skill 是岗位包时非空）。 */
+  preset?: PresetInstallResult
 }
 
 /**
  * 安装一个 Skill（按 productId 下载 ZIP → 定位 SKILL.md → 落盘）。
  * 已装同名 skill 会被覆盖（幂等重装）；失败时保留旧版。
+ *
+ * 若 ZIP 是岗位包（含 agent.cordis.yml），额外把 preset 落盘到
+ * ~/.dsh/.agent-presets/<id>/，SKILL.md 仍落 ~/.dsh/skills/<id>/。
  */
 export async function installSkill(
   client: HimarketClient,
   productId: string,
   installRoot: string,
+  presetRoot?: string,
 ): Promise<SkillInstallResult> {
   const root = installRoot.trim() === '' ? defaultSkillRoot() : installRoot
   const bytes = await client.downloadSkill(productId)
@@ -128,11 +136,24 @@ export async function installSkill(
     await rm(dest, { recursive: true, force: true })
     await copyTreeSafe(skillSrc, dest)
 
+    // 岗位包：额外落盘 preset
+    let preset: PresetInstallResult | undefined
+    if (await isPresetPackage(skillSrc)) {
+      preset = await installPreset(
+        skillSrc,
+        skillName,
+        presetRoot ?? defaultPresetRoot(),
+      )
+    }
+
     return {
       ok: true,
       name: skillName,
       dir: dest,
-      note: `已安装技能「${skillName}」到 ${dest}`,
+      note: preset !== undefined
+        ? `已安装岗位「${skillName}」：技能 → ${dest}；岗位 preset → ${preset.dir}`
+        : `已安装技能「${skillName}」到 ${dest}`,
+      preset,
     }
   } finally {
     await rm(tmp, { recursive: true, force: true })
