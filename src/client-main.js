@@ -39,6 +39,14 @@ const zh = {
   empty: '暂无数据，请先「同步」或检查账号是否已订阅/上架。',
   error: '出错了',
   ok: '完成',
+  publishTitle: '④ 发布我的岗位到市场',
+  publishHint: '把本机已迭代优化的数字员工岗位（preset 人设 + 岗位技能）打包上架，供同事同步安装。先填门户 ID 与管理员密码，再点要发布的岗位。',
+  portalLabel: '门户 ID',
+  portalPlaceholder: '发布到的门户 ID（留空则不发布到门户）',
+  adminPassLabel: '管理员密码',
+  adminPassPlaceholder: '管理员账号密码（登录缓存 token，仅用于发布）',
+  publish: '发布',
+  publishing: '发布中',
 }
 
 const en = {
@@ -60,6 +68,14 @@ const en = {
   empty: 'Nothing yet. Sync first, or check subscriptions/published items.',
   error: 'Error',
   ok: 'Done',
+  publishTitle: '4. Publish My Job to Market',
+  publishHint: 'Package your locally iterated digital-employee job (preset persona + job skill) and publish it for colleagues to install. Fill portal ID and admin password first, then click the job to publish.',
+  portalLabel: 'Portal ID',
+  portalPlaceholder: 'Portal ID to publish to (blank = skip portal)',
+  adminPassLabel: 'Admin password',
+  adminPassPlaceholder: 'Admin account password (login to cache token, used for publish)',
+  publish: 'Publish',
+  publishing: 'Publishing',
 }
 
 const CSS = [
@@ -114,12 +130,15 @@ function HimarketTab(props) {
   const [baseUrl, setBaseUrl] = React.useState('')
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
+  const [portalId, setPortalId] = React.useState('')
+  const [adminPassword, setAdminPassword] = React.useState('')
 
   const refresh = React.useCallback(function () {
     call('/himarket/state').then(function (data) {
       setState({ status: 'ready', data })
       if (data && data.baseUrl) setBaseUrl(data.baseUrl)
       if (data && data.username) setUsername(data.username)
+      if (data && data.portalId) setPortalId(data.portalId)
     }, function (err) {
       setState({ status: 'error', error: err.message })
     })
@@ -129,7 +148,9 @@ function HimarketTab(props) {
 
   function saveConfig() {
     setBusy(true)
-    call('/himarket/save-config', { baseUrl, username, password })
+    var patch = { baseUrl, username, password, portalId }
+    if (adminPassword.trim() !== '') patch.adminPassword = adminPassword
+    call('/himarket/save-config', patch)
       .then(function () { setMessage(t('saved')); setBusy(false); refresh() },
         function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
   }
@@ -145,6 +166,14 @@ function HimarketTab(props) {
   function installSkill(nameOrId) {
     setBusy(true)
     call('/himarket/install-skill', { nameOrId }).then(function (data) {
+      setMessage(data.summary || t('ok')); setBusy(false); refresh()
+    }, function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
+  }
+
+  function publishMyJob(job) {
+    setBusy(true)
+    setMessage(t('publishing') + '：' + job)
+    call('/himarket/publish-job', { job }).then(function (data) {
       setMessage(data.summary || t('ok')); setBusy(false); refresh()
     }, function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
   }
@@ -214,6 +243,22 @@ function HimarketTab(props) {
           )
         }),
       ),
+
+    el('h3', null, t('publishTitle')),
+    el('p', { className: 'hm_message' }, t('publishHint')),
+    el('div', { className: 'hm_field' },
+      el('label', null, t('portalLabel')),
+      el('input', { className: 'hm_input', type: 'text', placeholder: t('portalPlaceholder'), value: portalId, onChange: (e) => setPortalId(e.target.value) }),
+    ),
+    el('div', { className: 'hm_field' },
+      el('label', null, t('adminPassLabel')),
+      el('input', { className: 'hm_input', type: 'password', placeholder: t('adminPassPlaceholder'), value: adminPassword, onChange: (e) => setAdminPassword(e.target.value) }),
+    ),
+    el('div', { className: 'hm_row' },
+      ['pm', 'dev', 'qa', 'leader', 'newbie', 'secretary'].map(function (j) {
+        return el('button', { className: 'hm_btn', type: 'button', disabled: busy, key: j, onClick: () => publishMyJob(j) }, t('publish') + '：' + j)
+      }),
+    ),
 
     state.status === 'error' ? el('p', { className: 'hm_message', 'data-error': 'true' }, t('error') + '：' + state.error) : null,
   )

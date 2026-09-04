@@ -23,8 +23,12 @@ export interface HimarketSettings {
   username: string
   /** Developer account password (plaintext, local settings.yaml only). */
   password: string
-  /** Cached JWT; re-login happens on 401. */
+  /** Cached developer JWT; re-login happens on 401. */
   token: string
+  /** Cached admin JWT（发布用，/admins/login）；发布才会用到。 */
+  adminToken: string
+  /** 发布岗位包时发布到的门户 ID（可选，缺省不发布到门户）。 */
+  portalId: string
   /** Skill install root; empty falls back to ~/.dsh/skills. */
   skillInstallDir: string
 }
@@ -79,6 +83,8 @@ export function attachSettings(
         username: Schema.string().default(''),
         password: Schema.string().default(''),
         token: Schema.string().default(''),
+        adminToken: Schema.string().default(''),
+        portalId: Schema.string().default(''),
         skillInstallDir: Schema.string().default(''),
       })
       const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })

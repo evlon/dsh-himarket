@@ -20,6 +20,8 @@ import { McpManager } from './mcp.js'
 import { attachSettings } from './settings.js'
 import type { HimarketSettings } from './settings.js'
 import { installSkill, defaultSkillRoot } from './skill.js'
+import { packageLocalJob } from './publish.js'
+import type { PublishPackageResult } from './publish.js'
 import { registerHimarketTools } from './tools.js'
 
 export const name = 'himarket'
@@ -35,6 +37,7 @@ interface BridgeState {
   loggedIn: boolean
   baseUrl: string
   username: string
+  portalId: string
   mcpServers: SubscribedMcp[]
   activeMcpNames: string[]
   publishedSkills: PublishedSkill[]
@@ -49,6 +52,8 @@ export function apply(ctx: Context, config: Config): void {
     username: '',
     password: '',
     token: '',
+    adminToken: '',
+    portalId: '',
     skillInstallDir: config.skillInstallDir ?? '',
   }
 
@@ -71,7 +76,13 @@ export function apply(ctx: Context, config: Config): void {
     if (s.baseUrl.trim() === '' || s.username.trim() === '' || s.password.trim() === '') {
       return undefined
     }
-    return new HimarketClient({ baseUrl: s.baseUrl, username: s.username, password: s.password, token: s.token })
+    return new HimarketClient({
+      baseUrl: s.baseUrl,
+      username: s.username,
+      password: s.password,
+      token: s.token,
+      adminToken: s.adminToken,
+    })
   }
 
   async function ensureReady(): Promise<HimarketClient> {
@@ -129,6 +140,39 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
+  /**
+   * 把本机已迭代的岗位打包并发布到 HiMarket（管理员端点）。
+   * 流程：packageLocalJob（preset+skill 合并成 zip）→ publishSkillPackage（建/复用产品→上传→发布 online）。
+   */
+  async function publishJob(job: string): Promise<string> {
+    const s = settings.current()
+    if (s.baseUrl.trim() === '') throw new Error('还没配置 HiMarket 地址')
+    if (s.username.trim() === '' || s.password.trim() === '') {
+      throw new Error('还没配置 HiMarket 管理员账号（用户名/密码）')
+    }
+    if (client === undefined) client = buildClient()!
+    let pkg: PublishPackageResult | undefined
+    try {
+      pkg = await packageLocalJob(job, { skillRoot: skillRoot() })
+      const zipPath = pkg.zipPath
+      const stageRoot = pkg.stageRoot
+      const zipBytes = new Uint8Array(await import('node:fs/promises').then((m) => m.readFile(zipPath)))
+      const result = await client.publishSkillPackage(job, zipBytes, {
+        portalId: s.portalId,
+        categoryName: '数字员工岗位',
+      })
+      return `已发布岗位「${job}」到 HiMarket：产品 ${result.productId}，版本 ${result.version}（online）。同事可在市场同步后安装。`
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      return `发布失败：${lastError}`
+    } finally {
+      if (pkg !== undefined) {
+        const stageRoot = pkg.stageRoot
+        await import('node:fs/promises').then((m) => m.rm(stageRoot, { recursive: true, force: true })).catch(() => {})
+      }
+    }
+  }
+
   async function refreshInstalledSkills(): Promise<Set<string>> {
     const root = skillRoot()
     const names = new Set<string>()
@@ -149,6 +193,7 @@ export function apply(ctx: Context, config: Config): void {
       loggedIn: (client?.hasToken ?? false) || s.token !== '',
       baseUrl: s.baseUrl,
       username: s.username,
+      portalId: s.portalId,
       mcpServers: subscribedMcps,
       activeMcpNames: mcpManager?.activeServerNames() ?? [],
       publishedSkills,
@@ -180,6 +225,7 @@ export function apply(ctx: Context, config: Config): void {
   void registerHimarketTools(ctx, baseUrl, {
     sync,
     installSkill: installByNameOrId,
+    publishJob,
   })
 
   ctx.inject(['webServer'], (scope) => {
@@ -239,10 +285,23 @@ export function apply(ctx: Context, config: Config): void {
             if (typeof body.baseUrl === 'string') patch.baseUrl = body.baseUrl
             if (typeof body.username === 'string') patch.username = body.username
             if (typeof body.password === 'string') patch.password = body.password
+            if (typeof body.portalId === 'string') patch.portalId = body.portalId
             if (typeof body.skillInstallDir === 'string') patch.skillInstallDir = body.skillInstallDir
             // 地址被清空时，一并清空 token（避免残留旧凭证）。
             if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
               patch.token = ''
+              patch.adminToken = ''
+            }
+            // 管理员密码单独传入：登录管理员以缓存 adminToken（不持久化密码本身，仅缓存 token）。
+            if (typeof body.adminPassword === 'string' && body.adminPassword.trim() !== '') {
+              try {
+                const tmp = buildClient()!
+                const adminToken = await tmp.loginAdmin()
+                patch.adminToken = adminToken
+              } catch (e) {
+                // 管理员登录失败不阻断保存，仅记录错误。
+                lastError = e instanceof Error ? e.message : String(e)
+              }
             }
             await settings.save(patch)
             // 凭证变化：丢弃旧 client（含旧 token）；若地址被清空，同时卸载 MCP fiber 并清空内存缓存。
@@ -271,6 +330,17 @@ export function apply(ctx: Context, config: Config): void {
               return
             }
             const summary = await installByNameOrId(nameOrId)
+            sendJson(res, 200, { ok: true, summary })
+            return
+          }
+          if (method === 'POST' && pathname === '/himarket/publish-job') {
+            const body = await readBody()
+            const job = typeof body.job === 'string' ? body.job : ''
+            if (job === '') {
+              sendError(res, 400, '缺少 job')
+              return
+            }
+            const summary = await publishJob(job)
             sendJson(res, 200, { ok: true, summary })
             return
           }

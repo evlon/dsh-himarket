@@ -26,10 +26,11 @@ interface DefineToolFn {
   (options: Record<string, unknown>): unknown
 }
 
-/** 桥接暴露给工具的同步/安装回调（由 index.ts 注入）。 */
+/** 桥接暴露给工具的同步/安装/发布回调（由 index.ts 注入）。 */
 export interface HimarketToolDeps {
   sync(): Promise<string>
   installSkill(nameOrId: string): Promise<string>
+  publishJob(job: string): Promise<string>
 }
 
 /** 把字符串渲染成模型可见文本块。 */
@@ -90,7 +91,31 @@ export async function registerHimarketTools(ctx: Context, baseUrl: string, deps:
     },
   })
 
+  const publishTool = defineTool({
+    name: 'himarket_publish_job',
+    description: '把本机已迭代优化的数字员工岗位（preset 人设 + 岗位技能）打包并发布到 HiMarket，供同事同步安装。参数传岗位 id（如 pm/dev/qa/leader/newbie/secretary）。当用户说「发布 pm 岗位」「把我的岗位分享到市场」时调用。需要先在设置里填好管理员账号。',
+    parameters: {
+      job: {
+        type: 'string',
+        required: true,
+        description: '要发布的岗位 id（本地已安装/迭代的岗位目录名，如 pm）',
+      },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: renderResult,
+    },
+    timeoutMs: 120_000,
+    isConcurrencySafe: () => false,
+    async execute(args: Record<string, unknown>) {
+      const job = typeof args.job === 'string' ? args.job.trim() : ''
+      if (job === '') throw new Error('请提供要发布的岗位 id')
+      return await deps.publishJob(job)
+    },
+  })
+
   tools.register(syncTool)
   tools.register(installTool)
-  ctx.logger.info('[dsh-himarket] 已注册对话式工具 himarket_sync / himarket_install_skill')
+  tools.register(publishTool)
+  ctx.logger.info('[dsh-himarket] 已注册对话式工具 himarket_sync / himarket_install_skill / himarket_publish_job')
 }
