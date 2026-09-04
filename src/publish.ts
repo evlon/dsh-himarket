@@ -107,19 +107,20 @@ export async function packageLocalJob(
     throw new Error(`本机未找到岗位「${job}」的技能（缺 ${skillDir}/${SKILL_MD}）。`)
   }
 
-  // stage 根：preset 目录内容（除 SKILL.md 等 skill 侧文件外）整拷，再补 skill 侧的 SKILL.md。
+  // stage 根：preset 目录内容（除 SKILL.md 等 skill 侧文件外）整拷到 stageRoot 根，
+  // 再补 skill 侧的 SKILL.md。注意：文件必须打平到 zip 根目录（无 <job>/ 子层），
+  // 否则 HiMarket 会把顶层目录名当产品标识、SKILL.md 被单独抽取、其余文件落到
+  // 「.」目录导致展示 404、下载包也缺文件（已实测：pm/secretary 包因此异常）。
   const home = dshHome()
   const stageRoot = await mkdtemp(join(tmpdir(), `dsh-himarket-pub-${job}-`))
-  const stage = join(stageRoot, job)
-  await mkdir(stage, { recursive: true })
 
   // 1) preset 侧：拷贝 agent.cordis.yml + preset.yml + 伴随文件（覆盖式）。
-  await copyTreeSafe(presetDir, stage)
+  await copyTreeSafe(presetDir, stageRoot)
 
   // 2) skill 侧：把 SKILL.md 落到 stage 根（若 preset 侧也有同名 SKILL.md，技能侧优先）。
-  await copyFile(join(skillDir, SKILL_MD), join(stage, SKILL_MD))
+  await copyFile(join(skillDir, SKILL_MD), join(stageRoot, SKILL_MD))
 
-  // 3) 打包为 zip（bsdtar 处理 Windows 路径 + 保证 zip 内相对路径）。
+  // 3) 打包为 zip（bsdtar 处理 Windows 路径 + 保证 zip 内相对路径打平到根）。
   const zipPath = join(stageRoot, `${job}.zip`)
   let tarBin = 'tar'
   if (process.platform === 'win32') {
@@ -129,13 +130,16 @@ export async function packageLocalJob(
       tarBin = winTar
     } catch {}
   }
-  await execFileAsync(tarBin, ['-a', '-cf', zipPath, '-C', stage, '.'], { timeout: 120000, windowsHide: true })
+  // 用「列出文件」而非「.」作为打包源，避免 zip 内出现 ./ 顶层目录项
+  // （HiMarket 会把 ./ 项当成「.」目录，导致其他文件 404、下载包缺失）。
+  const entries = (await readdir(stageRoot)).filter((n) => n !== `${job}.zip`)
+  await execFileAsync(tarBin, ['-a', '-cf', zipPath, '-C', stageRoot, ...entries], { timeout: 120000, windowsHide: true })
 
   const zipBytes = await readFile(zipPath)
   return {
     name: job,
     zipPath,
     stageRoot,
-    note: `已打包岗位「${job}」：${stage}（preset + skill 合并）→ ${zipPath}（${zipBytes.length} 字节）`,
+    note: `已打包岗位「${job}」：${stageRoot}（preset + skill 合并打平到根）→ ${zipPath}（${zipBytes.length} 字节）`,
   }
 }
