@@ -279,9 +279,18 @@ export class HimarketClient {
     const vlist = Array.isArray(versions) ? versions : (versions as unknown as SkillVersion[])
     const draft = vlist
       .filter((v) => v.status === 'draft')
-      .sort((a, b) => String(b.version).localeCompare(String(a.version)))[0] ?? vlist[0]
-    if (draft?.version === undefined) throw new HimarketError('产品无可用版本')
-    const ver = String(draft.version)
+      .sort((a, b) => String(b.version).localeCompare(String(a.version)))[0]
+    const ver = draft?.version !== undefined ? String(draft.version) : undefined
+    // 没有 draft：说明本次上传的内容与线上一致（服务端未建新版本）。
+    // 若最新版本已在线，则视为「无需重发」，幂等成功；否则报错。
+    if (ver === undefined) {
+      const latest = [...vlist].sort((a, b) => String(b.version).localeCompare(String(a.version)))[0]
+      if (latest?.status === 'online') {
+        // 幂等：已是最新线上版本。
+        return { productId, version: String(latest.version) }
+      }
+      throw new HimarketError('上传后未生成 draft 版本，且最新版本非 online，无法发布')
+    }
     const pubResp = await this.adminRequest<unknown>(`/skills/${encodeURIComponent(productId)}/versions/${encodeURIComponent(ver)}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'online', force: true, updateLatestLabel: true }),
