@@ -87,6 +87,9 @@ export class HimarketClient {
   private readonly baseUrl: string
   private readonly username: string
   private readonly password: string
+  /** 管理员账号（/admins/login 用，默认 admin）；与开发者账号区分。 */
+  private readonly adminUsername: string
+  private readonly adminPassword: string
   /** 开发者 token（/developers/login），sync/install 用。 */
   private token: string
   /** 管理员 token（/admins/login），publish 用。 */
@@ -97,6 +100,8 @@ export class HimarketClient {
     baseUrl: string
     username: string
     password: string
+    adminUsername?: string
+    adminPassword?: string
     token?: string
     adminToken?: string
     fetchFn?: typeof fetch
@@ -104,6 +109,8 @@ export class HimarketClient {
     this.baseUrl = normalizeBaseUrl(opts.baseUrl)
     this.username = opts.username
     this.password = opts.password
+    this.adminUsername = opts.adminUsername ?? 'admin'
+    this.adminPassword = opts.adminPassword ?? ''
     this.token = opts.token ?? ''
     this.adminToken = opts.adminToken ?? ''
     this.fetchFn = opts.fetchFn ?? globalThis.fetch
@@ -115,6 +122,16 @@ export class HimarketClient {
 
   get currentToken(): string {
     return this.token
+  }
+
+  /** 是否已缓存管理员 token（发布前判断）。 */
+  adminTokenMissing(): boolean {
+    return this.adminToken === ''
+  }
+
+  /** 返回缓存的管理员 token（供发布后回写 settings）。 */
+  cachedAdminToken(): string {
+    return this.adminToken
   }
 
   /** 登录并缓存 token；返回 access_token。 */
@@ -177,7 +194,7 @@ export class HimarketClient {
   async loginAdmin(): Promise<string> {
     const wrapped = await this.request<AuthData>('/admins/login', {
       method: 'POST',
-      body: JSON.stringify({ username: this.username, password: this.password }),
+      body: JSON.stringify({ username: this.adminUsername, password: this.adminPassword }),
       auth: false,
     })
     const token = wrapped.access_token

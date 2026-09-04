@@ -27,6 +27,10 @@ export interface HimarketSettings {
   token: string
   /** Cached admin JWT（发布用，/admins/login）；发布才会用到。 */
   adminToken: string
+  /** 管理员账号用户名（默认 admin）；与开发者账号区分，发布才用。 */
+  adminUsername: string
+  /** 管理员账号密码（仅运行时输入用，不持久化明文；发布时用于 /admins/login 缓存 token）。 */
+  adminPassword: string
   /** 发布岗位包时发布到的门户 ID（可选，缺省不发布到门户）。 */
   portalId: string
   /** Skill install root; empty falls back to ~/.dsh/skills. */
@@ -84,6 +88,8 @@ export function attachSettings(
         password: Schema.string().default(''),
         token: Schema.string().default(''),
         adminToken: Schema.string().default(''),
+        adminUsername: Schema.string().default('admin'),
+        adminPassword: Schema.string().default(''),
         portalId: Schema.string().default(''),
         skillInstallDir: Schema.string().default(''),
       })

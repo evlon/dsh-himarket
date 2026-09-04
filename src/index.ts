@@ -53,6 +53,8 @@ export function apply(ctx: Context, config: Config): void {
     password: '',
     token: '',
     adminToken: '',
+    adminUsername: 'admin',
+    adminPassword: '',
     portalId: '',
     skillInstallDir: config.skillInstallDir ?? '',
   }
@@ -82,6 +84,8 @@ export function apply(ctx: Context, config: Config): void {
       password: s.password,
       token: s.token,
       adminToken: s.adminToken,
+      adminUsername: s.adminUsername,
+      adminPassword: s.adminPassword,
     })
   }
 
@@ -148,9 +152,16 @@ export function apply(ctx: Context, config: Config): void {
     const s = settings.current()
     if (s.baseUrl.trim() === '') throw new Error('还没配置 HiMarket 地址')
     if (s.username.trim() === '' || s.password.trim() === '') {
-      throw new Error('还没配置 HiMarket 管理员账号（用户名/密码）')
+      throw new Error('还没配置 HiMarket 开发者账号（用户名/密码）')
     }
     if (client === undefined) client = buildClient()!
+    // 管理员 token 缺失但有密码记录时，先登录管理员再发布。
+    if (client.adminTokenMissing() && s.adminPassword.trim() !== '') {
+      await client.loginAdmin()
+      if (client.adminTokenMissing() === false) {
+        await settings.save({ adminToken: client.cachedAdminToken() })
+      }
+    }
     let pkg: PublishPackageResult | undefined
     try {
       pkg = await packageLocalJob(job, { skillRoot: skillRoot() })
@@ -294,8 +305,17 @@ export function apply(ctx: Context, config: Config): void {
             }
             // 管理员密码单独传入：登录管理员以缓存 adminToken（不持久化密码本身，仅缓存 token）。
             if (typeof body.adminPassword === 'string' && body.adminPassword.trim() !== '') {
+              const cur = settings.current()
               try {
-                const tmp = buildClient()!
+                const tmp = new HimarketClient({
+                  baseUrl: patch.baseUrl ?? cur.baseUrl,
+                  username: patch.username ?? cur.username,
+                  password: patch.password ?? cur.password,
+                  token: cur.token,
+                  adminToken: cur.adminToken,
+                  adminUsername: cur.adminUsername,
+                  adminPassword: body.adminPassword,
+                })
                 const adminToken = await tmp.loginAdmin()
                 patch.adminToken = adminToken
               } catch (e) {
