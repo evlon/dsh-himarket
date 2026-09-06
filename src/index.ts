@@ -38,6 +38,7 @@ interface BridgeState {
   baseUrl: string
   username: string
   portalId: string
+  gatewayUrl: string
   mcpServers: SubscribedMcp[]
   activeMcpNames: string[]
   publishedSkills: PublishedSkill[]
@@ -56,6 +57,7 @@ export function apply(ctx: Context, config: Config): void {
     adminUsername: 'admin',
     adminPassword: '',
     portalId: '',
+    gatewayUrl: '',
     skillInstallDir: config.skillInstallDir ?? '',
   }
 
@@ -67,6 +69,43 @@ export function apply(ctx: Context, config: Config): void {
   let publishedSkills: PublishedSkill[] = []
   let installedSkills = new Set<string>()
   let lastError = ''
+  /** 网关返回的来源/覆盖详情：productId → { source, overrides, overriddenBy } */
+  interface SourceDetail {
+    source: 'OFFICIAL' | 'COMMUNITY'
+    overrides?: string
+    overriddenBy?: Array<{ productId: string; name: string; publisher: string }>
+  }
+  let sourceDetail: Record<string, SourceDetail> = {}
+
+  /** 若配置了网关，批量拉取各产品的来源/覆盖标签。 */
+  async function refreshSources(): Promise<void> {
+    const gw = settings.current().gatewayUrl.trim()
+    if (gw === '') return
+    const ids = [...subscribedMcps, ...publishedSkills].map((p) => p.productId).filter((id) => id !== '')
+    if (ids.length === 0) return
+    try {
+      const res = await fetch(`${gw.replace(/\/+$/u, '')}/products/sources?ids=${encodeURIComponent(ids.join(','))}`)
+      if (!res.ok) return
+      const json = (await res.json().catch(() => ({ ok: false }))) as {
+        ok?: boolean
+        sources?: Record<string, SourceDetail>
+      }
+      if (json.ok && json.sources) {
+        const next: Record<string, SourceDetail> = {}
+        for (const id of ids) {
+          const s = json.sources[id]
+          next[id] = s
+            ? { source: s.source ?? 'COMMUNITY', overrides: s.overrides ?? '', overriddenBy: s.overriddenBy }
+            : { source: 'COMMUNITY' }
+        }
+        sourceDetail = next
+      }
+    } catch {
+      // 网关不可用不影响同步/安装
+    }
+  }
+
+  const sourceOf = (productId: string): 'OFFICIAL' | 'COMMUNITY' => sourceDetail[productId]?.source ?? 'COMMUNITY'
 
   const skillRoot = (): string => {
     const dir = settings.current().skillInstallDir
@@ -112,6 +151,21 @@ export function apply(ctx: Context, config: Config): void {
       subscribedMcps = mcpServers
       publishedSkills = skills
 
+      // 来源标签（企业发布/员工共建）+ 覆盖关系（官方默认、员工覆盖可选）：若配了网关则批量补
+      await refreshSources()
+      subscribedMcps = mcpServers.map((m) => ({
+        ...m,
+        source: sourceOf(m.productId),
+        overrides: sourceDetail[m.productId]?.overrides ?? '',
+        overriddenBy: sourceDetail[m.productId]?.overriddenBy ?? [],
+      }))
+      publishedSkills = skills.map((s) => ({
+        ...s,
+        source: sourceOf(s.productId),
+        overrides: sourceDetail[s.productId]?.overrides ?? '',
+        overriddenBy: sourceDetail[s.productId]?.overriddenBy ?? [],
+      }))
+
       const report = await (mcpManager ?? new McpManager(ctx, baseUrl)).reconcile(mcpServers, authHeaders)
       installedSkills = await refreshInstalledSkills()
 
@@ -154,19 +208,54 @@ export function apply(ctx: Context, config: Config): void {
     if (s.username.trim() === '' || s.password.trim() === '') {
       throw new Error('还没配置 HiMarket 开发者账号（用户名/密码）')
     }
-    if (client === undefined) client = buildClient()!
-    // 管理员 token 缺失但有密码记录时，先登录管理员再发布。
-    if (client.adminTokenMissing() && s.adminPassword.trim() !== '') {
-      await client.loginAdmin()
-      if (client.adminTokenMissing() === false) {
-        await settings.save({ adminToken: client.cachedAdminToken() })
-      }
-    }
     let pkg: PublishPackageResult | undefined
     try {
       pkg = await packageLocalJob(job, { skillRoot: skillRoot() })
       const zipPath = pkg.zipPath
-      const stageRoot = pkg.stageRoot
+
+      // 优先走包装层网关（推荐）：开发者账号登录 + /publish，无需管理员密码，
+      // 网关统一代发并登记归属/审计、打「企业发布/员工共建」来源标签。
+      const gw = s.gatewayUrl.trim()
+      if (gw !== '') {
+        const loginRes = await fetch(`${gw.replace(/\/+$/u, '')}/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: s.username, password: s.password }),
+        })
+        const loginJson = (await loginRes.json().catch(() => ({ ok: false }))) as {
+          ok?: boolean
+          sessionId?: string
+          error?: string
+        }
+        if (!loginJson.ok || !loginJson.sessionId) {
+          throw new Error(loginJson.error ?? '包装层登录失败')
+        }
+        const pubRes = await fetch(`${gw.replace(/\/+$/u, '')}/publish`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${loginJson.sessionId}` },
+          body: JSON.stringify({ name: job, zipPath, portalId: s.portalId }),
+        })
+        const pubJson = (await pubRes.json().catch(() => ({ ok: false }))) as {
+          ok?: boolean
+          productId?: string
+          version?: string
+          created?: boolean
+          action?: string
+          error?: string
+        }
+        if (!pubJson.ok) throw new Error(pubJson.error ?? '包装层发布失败')
+        const verb = pubJson.action === 'update' ? '更新' : '发布'
+        return `已${verb}岗位「${job}」到 HiMarket：产品 ${pubJson.productId}，版本 ${pubJson.version}。同事可在市场同步后安装。`
+      }
+
+      // 回退：直连 HiMarket 管理员端点（需填管理员密码）
+      if (client === undefined) client = buildClient()!
+      if (client.adminTokenMissing() && s.adminPassword.trim() !== '') {
+        await client.loginAdmin()
+        if (client.adminTokenMissing() === false) {
+          await settings.save({ adminToken: client.cachedAdminToken() })
+        }
+      }
       const zipBytes = new Uint8Array(await import('node:fs/promises').then((m) => m.readFile(zipPath)))
       const result = await client.publishSkillPackage(job, zipBytes, {
         portalId: s.portalId,
@@ -205,6 +294,7 @@ export function apply(ctx: Context, config: Config): void {
       baseUrl: s.baseUrl,
       username: s.username,
       portalId: s.portalId,
+      gatewayUrl: s.gatewayUrl,
       mcpServers: subscribedMcps,
       activeMcpNames: mcpManager?.activeServerNames() ?? [],
       publishedSkills,
@@ -298,6 +388,7 @@ export function apply(ctx: Context, config: Config): void {
             if (typeof body.password === 'string') patch.password = body.password
             if (typeof body.portalId === 'string') patch.portalId = body.portalId
             if (typeof body.skillInstallDir === 'string') patch.skillInstallDir = body.skillInstallDir
+            if (typeof body.gatewayUrl === 'string') patch.gatewayUrl = body.gatewayUrl
             // 地址被清空时，一并清空 token（避免残留旧凭证）。
             if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
               patch.token = ''

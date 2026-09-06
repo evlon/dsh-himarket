@@ -18,6 +18,12 @@ export interface SubscribedMcp {
   url: string
   transportType: string
   description: string
+  /** 来源标签（由包装层网关注入）：OFFICIAL=企业发布，COMMUNITY=员工共建。 */
+  source?: 'OFFICIAL' | 'COMMUNITY'
+  /** 覆盖的官方产品名（社区覆盖版指向它）；空=独立产品。 */
+  overrides?: string
+  /** 覆盖本产品的社区版列表（官方产品才有）。 */
+  overriddenBy?: Array<{ productId: string; name: string; publisher: string }>
 }
 
 /** 单个已发布 Skill（market-skills 条目）。 */
@@ -26,6 +32,12 @@ export interface PublishedSkill {
   name: string
   description: string
   skillTags: string[]
+  /** 来源标签（由包装层网关注入）：OFFICIAL=企业发布，COMMUNITY=员工共建。 */
+  source?: 'OFFICIAL' | 'COMMUNITY'
+  /** 覆盖的官方产品名（社区覆盖版指向它）；空=独立产品。 */
+  overrides?: string
+  /** 覆盖本产品的社区版列表（官方产品才有）。 */
+  overriddenBy?: Array<{ productId: string; name: string; publisher: string }>
 }
 
 /** market-mcps 的响应 data。 */

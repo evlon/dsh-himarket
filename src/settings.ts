@@ -33,6 +33,8 @@ export interface HimarketSettings {
   adminPassword: string
   /** 发布岗位包时发布到的门户 ID（可选，缺省不发布到门户）。 */
   portalId: string
+  /** 包装层（dsh-himarket-gateway）地址；填了则发布走网关、同步带「企业发布/员工共建」来源标签。 */
+  gatewayUrl: string
   /** Skill install root; empty falls back to ~/.dsh/skills. */
   skillInstallDir: string
 }
@@ -91,6 +93,7 @@ export function attachSettings(
         adminUsername: Schema.string().default('admin'),
         adminPassword: Schema.string().default(''),
         portalId: Schema.string().default(''),
+        gatewayUrl: Schema.string().default(''),
         skillInstallDir: Schema.string().default(''),
       })
       const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
