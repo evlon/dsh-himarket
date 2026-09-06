@@ -40,15 +40,11 @@ const zh = {
   error: '出错了',
   ok: '完成',
   publishTitle: '④ 发布我的岗位到市场',
-  publishHint: '把本机已迭代优化的数字员工岗位（preset 人设 + 岗位技能）打包上架，供同事同步安装。先填门户 ID 与管理员密码，再点要发布的岗位。',
-  portalLabel: '门户 ID',
-  portalPlaceholder: '发布到的门户 ID（留空则不发布到门户）',
-  adminPassLabel: '管理员密码',
-  adminPassPlaceholder: '管理员账号密码（登录缓存 token，仅用于发布）',
+  publishHint: '把本机已迭代优化的数字员工岗位（preset 人设 + 岗位技能）打包上架，供同事同步安装。发布走包装层（企业统一通道，自动登记归属/来源），请先填好上方包装层地址。',
   publish: '发布',
   publishing: '发布中',
-  gatewayLabel: '包装层地址（可选）',
-  gatewayPlaceholder: '如 http://127.0.0.1:3091，填了走网关发布并标记来源',
+  gatewayLabel: '包装层地址',
+  gatewayPlaceholder: '如 http://ai-job.ict.cmcc，发布与来源标签都走它',
   sourceOfficial: '企业发布',
   sourceCommunity: '员工共建',
   filterAll: '全部',
@@ -79,15 +75,11 @@ const en = {
   error: 'Error',
   ok: 'Done',
   publishTitle: '4. Publish My Job to Market',
-  publishHint: 'Package your locally iterated digital-employee job (preset persona + job skill) and publish it for colleagues to install. Fill portal ID and admin password first, then click the job to publish.',
-  portalLabel: 'Portal ID',
-  portalPlaceholder: 'Portal ID to publish to (blank = skip portal)',
-  adminPassLabel: 'Admin password',
-  adminPassPlaceholder: 'Admin account password (login to cache token, used for publish)',
+  publishHint: 'Package your locally iterated digital-employee job (preset persona + job skill) and publish it for colleagues to install. Publishing goes through the gateway (enterprise channel, records ownership/source automatically). Fill in the gateway URL above first.',
   publish: 'Publish',
   publishing: 'Publishing',
-  gatewayLabel: 'Gateway URL (optional)',
-  gatewayPlaceholder: 'e.g. http://127.0.0.1:3091; publish via gateway and tag source',
+  gatewayLabel: 'Gateway URL',
+  gatewayPlaceholder: 'e.g. http://ai-job.ict.cmcc; publishing and source tags go through it',
   sourceOfficial: 'Official',
   sourceCommunity: 'Community',
   filterAll: 'All',
@@ -157,8 +149,6 @@ function HimarketTab(props) {
   const [baseUrl, setBaseUrl] = React.useState('')
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
-  const [portalId, setPortalId] = React.useState('')
-  const [adminPassword, setAdminPassword] = React.useState('')
   const [gatewayUrl, setGatewayUrl] = React.useState('')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
 
@@ -167,7 +157,6 @@ function HimarketTab(props) {
       setState({ status: 'ready', data })
       if (data && data.baseUrl) setBaseUrl(data.baseUrl)
       if (data && data.username) setUsername(data.username)
-      if (data && data.portalId) setPortalId(data.portalId)
       if (data && data.gatewayUrl) setGatewayUrl(data.gatewayUrl)
     }, function (err) {
       setState({ status: 'error', error: err.message })
@@ -178,8 +167,7 @@ function HimarketTab(props) {
 
   function saveConfig() {
     setBusy(true)
-    var patch = { baseUrl, username, password, portalId, gatewayUrl }
-    if (adminPassword.trim() !== '') patch.adminPassword = adminPassword
+    var patch = { baseUrl, username, password, gatewayUrl }
     call('/himarket/save-config', patch)
       .then(function () { setMessage(t('saved')); setBusy(false); refresh() },
         function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
@@ -327,16 +315,8 @@ function HimarketTab(props) {
 
     el('h3', null, t('publishTitle')),
     el('p', { className: 'hm_message' }, t('publishHint')),
-    el('div', { className: 'hm_field' },
-      el('label', null, t('portalLabel')),
-      el('input', { className: 'hm_input', type: 'text', placeholder: t('portalPlaceholder'), value: portalId, onChange: (e) => setPortalId(e.target.value) }),
-    ),
-    el('div', { className: 'hm_field' },
-      el('label', null, t('adminPassLabel')),
-      el('input', { className: 'hm_input', type: 'password', placeholder: t('adminPassPlaceholder'), value: adminPassword, onChange: (e) => setAdminPassword(e.target.value) }),
-    ),
     el('div', { className: 'hm_row' },
-      ['pm', 'dev', 'qa', 'leader', 'newbie', 'secretary'].map(function (j) {
+      ['pm', 'dev', 'qa', 'leader', 'newbie', 'secretary', 'general'].map(function (j) {
         return el('button', { className: 'hm_btn', type: 'button', disabled: busy, key: j, onClick: () => publishMyJob(j) }, t('publish') + '：' + j)
       }),
     ),

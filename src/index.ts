@@ -233,7 +233,8 @@ export function apply(ctx: Context, config: Config): void {
         const pubRes = await fetch(`${gw.replace(/\/+$/u, '')}/publish`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${loginJson.sessionId}` },
-          body: JSON.stringify({ name: job, zipPath, portalId: s.portalId }),
+          // 同事发布不挂门户（门户发布是官方/网关侧能力），不传 portalId
+          body: JSON.stringify({ name: job, zipPath }),
         })
         const pubJson = (await pubRes.json().catch(() => ({ ok: false }))) as {
           ok?: boolean
@@ -248,20 +249,9 @@ export function apply(ctx: Context, config: Config): void {
         return `已${verb}岗位「${job}」到 HiMarket：产品 ${pubJson.productId}，版本 ${pubJson.version}。同事可在市场同步后安装。`
       }
 
-      // 回退：直连 HiMarket 管理员端点（需填管理员密码）
-      if (client === undefined) client = buildClient()!
-      if (client.adminTokenMissing() && s.adminPassword.trim() !== '') {
-        await client.loginAdmin()
-        if (client.adminTokenMissing() === false) {
-          await settings.save({ adminToken: client.cachedAdminToken() })
-        }
-      }
-      const zipBytes = new Uint8Array(await import('node:fs/promises').then((m) => m.readFile(zipPath)))
-      const result = await client.publishSkillPackage(job, zipBytes, {
-        portalId: s.portalId,
-        categoryName: '数字员工岗位',
-      })
-      return `已发布岗位「${job}」到 HiMarket：产品 ${result.productId}，版本 ${result.version}（online）。同事可在市场同步后安装。`
+      // 发布只走包装层（企业统一通道：登记归属/来源/审计，同事无需管理员密码）。
+      // 未配置网关时直接给出指引，不做直连管理员端点的回退。
+      throw new Error('发布岗位需先配置「包装层地址」（企业统一发布通道），请在设置里填写后保存再发布。')
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
       return `发布失败：${lastError}`
@@ -393,26 +383,6 @@ export function apply(ctx: Context, config: Config): void {
             if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
               patch.token = ''
               patch.adminToken = ''
-            }
-            // 管理员密码单独传入：登录管理员以缓存 adminToken（不持久化密码本身，仅缓存 token）。
-            if (typeof body.adminPassword === 'string' && body.adminPassword.trim() !== '') {
-              const cur = settings.current()
-              try {
-                const tmp = new HimarketClient({
-                  baseUrl: patch.baseUrl ?? cur.baseUrl,
-                  username: patch.username ?? cur.username,
-                  password: patch.password ?? cur.password,
-                  token: cur.token,
-                  adminToken: cur.adminToken,
-                  adminUsername: cur.adminUsername,
-                  adminPassword: body.adminPassword,
-                })
-                const adminToken = await tmp.loginAdmin()
-                patch.adminToken = adminToken
-              } catch (e) {
-                // 管理员登录失败不阻断保存，仅记录错误。
-                lastError = e instanceof Error ? e.message : String(e)
-              }
             }
             await settings.save(patch)
             // 凭证变化：丢弃旧 client（含旧 token）；若地址被清空，同时卸载 MCP fiber 并清空内存缓存。
