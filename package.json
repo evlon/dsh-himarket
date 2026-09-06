@@ -1,6 +1,6 @@
 {
   "name": "dsh-himarket",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "HiMarket bridge for DeepSeek Harness: sync subscribed MCP servers and install published Skills into DSH, with a beginner-friendly settings panel and chat tools",
   "license": "MIT",
   "type": "module",
