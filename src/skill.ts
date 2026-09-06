@@ -24,6 +24,13 @@ const execFileAsync = promisify(execFile)
 /** skill 名称合法性（dsh-skill-filesystem 要求 kebab-case）。 */
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u
 
+/** 排除名单：不属于 skill 组成、不该落进 skills/ 目录的文件。
+ *  岗位包 zip 根同时含 SKILL.md（→ skills/）与 agent.cordis.yml + preset.yml +
+ *  伴随文件（→ .agent-presets/，由 installPreset 处理）。skill 落盘只拷技能侧文件
+ *  （SKILL.md 保留），排除岗位 preset 侧文件——否则 skills/<name> 会被
+ *  agent.cordis.yml/preset.yml/tool-restrict.mjs 污染成岗位包而非纯技能目录。 */
+const SKIP_SKILL_FILES = new Set(['agent.cordis.yml', 'preset.yml', 'tool-restrict.mjs', 'package.json', 'README.md'])
+
 /** 默认安装根：~/.dsh/skills（DSH_HOME 优先）。 */
 export function defaultSkillRoot(): string {
   const home = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
@@ -63,11 +70,14 @@ function isWithin(root: string, target: string): boolean {
   return t === r || t.startsWith(r + sep)
 }
 
-/** 安全拷贝 skill 目录内容到目标目录（逐文件，忽略符号链接）。 */
+/** 安全拷贝 skill 目录内容到目标目录（逐文件，忽略符号链接）。
+ *  排除岗位 preset 侧文件（agent.cordis.yml/preset.yml/tool-restrict.mjs 等），
+ *  保证 skills/<name> 是纯技能目录。 */
 async function copyTreeSafe(srcDir: string, destDir: string): Promise<void> {
   await mkdir(destDir, { recursive: true })
   const entries = await readdir(srcDir, { withFileTypes: true })
   for (const entry of entries) {
+    if (SKIP_SKILL_FILES.has(entry.name)) continue
     const src = join(srcDir, entry.name)
     const dest = join(destDir, entry.name)
     if (!isWithin(destDir, dest)) continue

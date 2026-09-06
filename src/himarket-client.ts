@@ -257,8 +257,11 @@ export class HimarketClient {
     }
 
     // 3. 上传 zip（multipart/form-data: file=@zip）
+    // 文件名带时间戳：HiMarket 服务端对「同产品 + 同文件名」的上传可能判重跳过
+    // （不生成新 draft → 内容不更新）。加时间戳保证每次都是新文件名，强制服务端建新版本。
     const uploadBody = new FormData()
-    uploadBody.append('file', new Blob([zipBuffer], { type: 'application/zip' }), `${name}.zip`)
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    uploadBody.append('file', new Blob([zipBuffer], { type: 'application/zip' }), `${name}-${stamp}.zip`)
     const uploadUrl = `${this.baseUrl}${API_PREFIX}/skills/${encodeURIComponent(productId)}/package`
     const uploadRes = await this.fetchFn(uploadUrl, {
       method: 'POST',
@@ -275,21 +278,29 @@ export class HimarketClient {
     }
 
     // 4. 发布最新 draft 版本为 online（force）
+    // 服务端契约（SkillServiceImpl）：uploadPackage 只把 zip 覆盖进 Nacos skill draft，
+    // **不会**自动在 Product 版本列表建记录。要生成可发布的版本，必须显式
+    // POST /{productId}/draft（body { baseVersion, version }）创建版本记录，
+    // 再 PATCH 该 version 为 online。漏掉 createDraft 会导致：上传内容已更新但版本列表
+    // 无新 draft → 旧版本仍被下载（本 bug 曾致 secretary 更新不生效）。
     const versions = await this.adminRequest<SkillVersion[]>(`/skills/${encodeURIComponent(productId)}/versions`)
     const vlist = Array.isArray(versions) ? versions : (versions as unknown as SkillVersion[])
-    const draft = vlist
-      .filter((v) => v.status === 'draft')
-      .sort((a, b) => String(b.version).localeCompare(String(a.version)))[0]
-    const ver = draft?.version !== undefined ? String(draft.version) : undefined
-    // 没有 draft：说明本次上传的内容与线上一致（服务端未建新版本）。
-    // 若最新版本已在线，则视为「无需重发」，幂等成功；否则报错。
+    const sorted = [...vlist].sort((a, b) => String(b.version).localeCompare(String(a.version)))
+    const latestOnline = [...sorted].reverse().find((v) => v.status === 'online')
+    const draft = [...sorted].reverse().find((v) => v.status === 'draft')
+    let ver: string | undefined = draft?.version !== undefined ? String(draft.version) : undefined
     if (ver === undefined) {
-      const latest = [...vlist].sort((a, b) => String(b.version).localeCompare(String(a.version)))[0]
-      if (latest?.status === 'online') {
-        // 幂等：已是最新线上版本。
-        return { productId, version: String(latest.version) }
-      }
-      throw new HimarketError('上传后未生成 draft 版本，且最新版本非 online，无法发布')
+      // 没有 draft 版本记录 → 显式创建一个（baseVersion=当前最高 online；version=next 递增）。
+      const baseVersion = latestOnline?.version !== undefined ? String(latestOnline.version) : undefined
+      const nextVersion = bumpVersion(baseVersion)
+      this.adminRequest<unknown>(`/skills/${encodeURIComponent(productId)}/draft`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(baseVersion !== undefined ? { baseVersion } : {}),
+          version: nextVersion,
+        }),
+      })
+      ver = nextVersion
     }
     const pubResp = await this.adminRequest<unknown>(`/skills/${encodeURIComponent(productId)}/versions/${encodeURIComponent(ver)}`, {
       method: 'PATCH',
@@ -370,4 +381,13 @@ export class HimarketClient {
     }
     return (wrapped.data ?? (wrapped as unknown as T)) as T
   }
+}
+
+/** semver 递增：0.0.1 → 0.0.2；无 base 时返回 0.0.1。 */
+function bumpVersion(base: string | undefined): string {
+  if (base === undefined || base.trim() === '') return '0.0.1'
+  const parts = base.trim().split('.').map((p) => parseInt(p, 10) || 0)
+  while (parts.length < 3) parts.push(0)
+  const patch = (parts[2] ?? 0) + 1
+  return `${parts[0] ?? 0}.${parts[1] ?? 0}.${patch}`
 }
