@@ -15,6 +15,13 @@ export const inject = ['slots', 'locale']
 
 const el = React.createElement
 
+/**
+ * 插件版本号：由 scripts/build-client.mjs 构建时注入（esbuild define，
+ * __PLUGIN_VERSION__ → package.json version）。浏览器端无法读 package.json，
+ * 故在构建期固化为常量；未注入时回退 'dev'。用于设置页 UI 展示当前加载版本。
+ */
+const PLUGIN_VERSION = typeof __PLUGIN_VERSION__ !== 'undefined' ? __PLUGIN_VERSION__ : 'dev'
+
 const NS = 'settings.himarket'
 
 const zh = {
@@ -245,7 +252,9 @@ function HimarketTab(props) {
   }
 
   return el('div', { className: 'hm_section' },
-    el('h3', null, t('title')),
+    el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '8px' } },
+      el('h3', null, t('title')),
+      el('span', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' } }, `dsh-himarket v${PLUGIN_VERSION}`)),
     el('p', { className: 'hm_message' }, t('subtitle')),
 
     el('h3', null, t('configTitle')),
