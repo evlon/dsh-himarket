@@ -6,6 +6,18 @@
 - **一键安装已发布的 Skill** → 落盘到 `~/.dsh/skills/`，装完即可用，无需重启
 - **小白友好**：设置页一个「HiMarket」卡片 + 对话式入口（说「同步 HiMarket」「安装 xx 技能」即可）
 
+## DeepSeek Harness 版本适配
+
+本插件为**运行时宿主解析**设计：除 `@deepseek-ai/cordis`（peerDependencies，type-only）外，所有官方宿主能力（`@deepseek-ai/dsh-mcp-client` / `@deepseek-ai/dsh-tools` / `@deepseek-ai/dsh-skill-filesystem` / `@deepseek-ai/schemastery` 等）都在运行时经 `createRequire(ctx.baseUrl)` 从已安装的 DSH 宿主解析（`lib/index.js` 零静态外部 import），因此**天然兼容各 rc 宿主版本**，无需随宿主每日 rc 同步改码。
+
+| 宿主包 | peer/dev 范围 | 引用方式 |
+|---|---|---|
+| `@deepseek-ai/cordis` | `^4.0.2` | `Context`（type-only） |
+| `@deepseek-ai/schemastery` | `^3.18.2`（dev） | 仅构建/测试期 |
+| 其余 `@deepseek-ai/dsh-*` | 无（运行时动态解析） | `importOfficial`/`requireOfficial` |
+
+> **注意**：本插件的宿主兼容性取决于**实际安装的 dsh 宿主版本**及其提供的 `dsh-mcp-client` / `dsh-tools` / `dsh-skill-filesystem` / `schemastery`。若某个 dsh rc 改变了这些包的对外 API，可能出现运行时解析失败——此时请升级到下一个适配版本；`alpha`（如 `0.1.5-alpha.1`）为不稳定快照，仅记录/可尝试使用，出现问题优先反馈。
+
 ## 给同事（小白）用：三步
 
 1. 打开 DSH Web → **设置 → HiMarket**。
