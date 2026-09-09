@@ -338,11 +338,12 @@ export function apply(ctx) {
   ctx.effect(function () { return ctx.locale.register(NS, { zh, en }) }, 'himarket: dictionaries')
   const t = ctx.locale.bind(NS)
   injectCss()
-  ctx.slots.inject('settings.plugins.tab', function () {
+  // 设置页侧栏一级入口（与 dsh-matrix-agent「数字分身」同 slot：settings.section）。
+  ctx.slots.inject('settings.section', function () {
     return ctx.slots.register({
-      name: 'settings.plugins.tab',
+      name: 'settings.section',
       id: 'himarket',
-      order: 30,
+      order: 40,
       label: () => t('tab'),
       locale: NS,
       inject: () => ({ t }),
