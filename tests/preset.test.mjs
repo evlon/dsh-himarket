@@ -33,9 +33,20 @@ function fakeClient(zipPath) {
   return new HimarketClient({ baseUrl: 'http://x', username: 'u', password: 'p', fetchFn })
 }
 
-/** 打一个 zip（在 pkgDir 内打相对路径）。 */
+/** 打一个 zip（在 pkgDir 内打相对路径）。
+ *
+ * ⚠️ 必须用 Windows 自带 bsdtar（C:\Windows\System32\tar.exe）：
+ * PATH 上的 tar 在 Windows 下常是 Git Bash 的 GNU tar，它把 `C:\...` 当远程主机
+ * 解析并失败（`tar: Cannot connect to C: resolve failed`）。
+ * 注意条目用显式列表而非 `.` —— `.` 会给路径加 `./` 前缀，Nacos 解析时会丢弃子目录。
+ */
 async function zipDir(pkgDir, zipPath) {
-  await execFileAsync('tar', ['-a', '-cf', zipPath, '-C', pkgDir, '.'], { windowsHide: true })
+  const isWin = process.platform === 'win32'
+  const tarBin = isWin
+    ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+  const entries = await readdir(pkgDir)
+  await execFileAsync(tarBin, ['-a', '-cf', zipPath, '-C', pkgDir, ...entries], { windowsHide: true })
 }
 
 test('installSkill 识别岗位包并分别落盘 preset 与 skill', async () => {

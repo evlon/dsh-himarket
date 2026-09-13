@@ -87,7 +87,12 @@ test('installSkill 解压 ZIP 并落盘（含 SKILL.md frontmatter name）', asy
   const zipPath = join(tmp, 'pkg.zip')
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
-  await promisify(execFile)('tar', ['-cf', zipPath, '-C', tmp, 'pkg'], { windowsHide: true })
+  // ⚠️ Windows 下必须用系统 bsdtar：PATH 上的 tar 常是 Git Bash 的 GNU tar，
+  //    它把 `C:\...` 当远程主机解析并失败（tar: Cannot connect to C: resolve failed）。
+  const tarBin = process.platform === 'win32'
+    ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+  await promisify(execFile)(tarBin, ['-cf', zipPath, '-C', tmp, 'pkg'], { windowsHide: true })
 
   const installRoot = join(tmp, 'skills')
   const fetchFn = async () => {
@@ -121,7 +126,10 @@ test('installSkill 拒绝无 SKILL.md 的包', async () => {
   const zipPath = join(tmp, 'bad.zip')
   const { execFile } = await import('node:child_process')
   const { promisify } = await import('node:util')
-  await promisify(execFile)('tar', ['-cf', zipPath, '-C', tmp, 'pkg'], { windowsHide: true })
+  const tarBin2 = process.platform === 'win32'
+    ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    : 'tar'
+  await promisify(execFile)(tarBin2, ['-cf', zipPath, '-C', tmp, 'pkg'], { windowsHide: true })
 
   const fetchFn = async () => {
     const bytes = await readFile(zipPath)

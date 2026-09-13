@@ -23,12 +23,17 @@ import { installSkill, defaultSkillRoot } from './skill.js'
 import { packageLocalJob } from './publish.js'
 import type { PublishPackageResult } from './publish.js'
 import { registerHimarketTools } from './tools.js'
+import { defaultBaseUrl, defaultJobUrl } from './domain.js'
 
 export const name = 'himarket'
 
 /** cordis.patch.yml 行 config（默认值，settings 覆盖）。 */
 export interface Config {
   skillInstallDir: string
+  /** HiMarket 门户地址；缺省用 domain.ts 的环境档位默认值（新环境 market.ai.ict.cmcc）。 */
+  baseUrl?: string
+  /** 岗位网关地址；缺省用 domain.ts 的环境档位默认值（新环境 gateway.ai.ict.cmcc）。 */
+  gatewayUrl?: string
 }
 
 /** 桥接运行时状态快照（给 HTTP /state 与同步摘要用）。 */
@@ -48,8 +53,10 @@ interface BridgeState {
 
 export function apply(ctx: Context, config: Config): void {
   const baseUrl = ctx.baseUrl ?? 'file:///'
+  // 域名默认值集中走 domain.ts（默认新 K8S 环境 *.ai.ict.cmcc，可经环境变量/行 config
+  // 切回旧环境 *.ict.cmcc）；行 config 显式给值则优先。
   const fallback: HimarketSettings = {
-    baseUrl: '',
+    baseUrl: config.baseUrl?.trim() || defaultBaseUrl(),
     username: '',
     password: '',
     token: '',
@@ -57,7 +64,7 @@ export function apply(ctx: Context, config: Config): void {
     adminUsername: 'admin',
     adminPassword: '',
     portalId: '',
-    gatewayUrl: '',
+    gatewayUrl: config.gatewayUrl?.trim() || defaultJobUrl(),
     skillInstallDir: config.skillInstallDir ?? '',
   }
 

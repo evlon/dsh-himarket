@@ -26,10 +26,10 @@ import { homedir } from 'node:os'
 const USER_PRESET_DIR = '.agent-presets'
 
 /** preset id 合法性（与 dsh-agent-presets 的 PRESET_ID 一致）。 */
-const PRESET_ID = /^[a-z0-9][a-z0-9-]*$/
+export const PRESET_ID = /^[a-z0-9][a-z0-9-]*$/
 
 /** 岗位包 marker 文件：存在即视为岗位包。 */
-const PRESET_COMPOSITION = 'agent.cordis.yml'
+export const PRESET_COMPOSITION = 'agent.cordis.yml'
 
 /** 默认 harness home（DSH_HOME 优先）。 */
 function dshHome(): string {
@@ -59,7 +59,8 @@ export async function isPresetPackage(unpackDir: string): Promise<boolean> {
   }
 }
 
-/** 排除名单：不属于 preset 组成、不该落进 preset 目录的文件。 */
+/** 排除名单：不属于 preset 组成、不该落进 preset 目录的文件。
+ *  注意：`skills/` **不**在此列 —— 分层结构下它随 preset 走（customSkillDirs 指向它）。 */
 const SKIP_PRESET_FILES = new Set(['SKILL.md', 'package.json', 'README.md'])
 
 /** 安全拷贝目录内容到目标（逐文件递归，忽略符号链接与 node_modules/点文件）。 */
@@ -79,7 +80,11 @@ async function copyTreeSafe(srcDir: string, destDir: string): Promise<void> {
 }
 
 /**
- * 把岗位包落盘为 preset：agent.cordis.yml + preset.yml + 伴随文件 → ~/.dsh/.agent-presets/<id>/。
+ * 把岗位包落盘为 preset：agent.cordis.yml + preset.yml + 伴随文件 + skills/ → ~/.dsh/.agent-presets/<id>/。
+ *
+ * ⚠️ 本函数会 **rm -rf** 目标目录再整拷（幂等重装）。所以调用方若有「安装后要额外
+ * 写入的文件」（如岗位技能目录的重组结果），必须在**本函数之后**做，否则会被删掉。
+ *
  * @param unpackDir - 解压后的岗位包根（含 agent.cordis.yml）
  * @param id - preset id（目录名），取 SKILL.md frontmatter 的 name 或产品名
  * @param presetRoot - preset 落盘根，默认 ~/.dsh/.agent-presets
@@ -97,7 +102,7 @@ export async function installPreset(
   const dest = join(root, id)
 
   // 幂等重装：先删旧目录，再整拷 preset 组成（agent.cordis.yml + preset.yml + 伴随文件如
-  // tool-restrict.mjs），排除 SKILL.md 等 skill 侧文件（由 installSkill 落到 skills/）。
+  // tool-restrict.mjs + skills/），排除 SKILL.md 等 skill 侧文件。
   await mkdir(root, { recursive: true })
   await rm(dest, { recursive: true, force: true })
   const entries = await readdir(unpackDir, { withFileTypes: true })

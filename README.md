@@ -62,10 +62,38 @@ dsh plugin --profile web add link:E:/path/to/dsh-himarket
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `baseUrl` | 空 | HiMarket 后端地址（不含尾斜杠），如 `http://10.0.0.8:8080` |
+| `baseUrl` | `http://market.ai.ict.cmcc` | HiMarket 后端地址（不含尾斜杠）。旧环境填 `http://ai-market.ict.cmcc` |
+| `gatewayUrl` | `http://gateway.ai.ict.cmcc` | 岗位网关（包装层）地址。旧环境填 `http://ai-job.ict.cmcc` |
 | `username` | 空 | 开发者账号用户名 |
 | `password` | 空 | 开发者账号密码（明文，仅存本机 settings.yaml） |
 | `skillInstallDir` | 空 | Skill 安装根；留空回退 `~/.dsh/skills` |
+
+### 域名配置（新旧环境并存）
+
+内网原有 `*.ict.cmcc`，新部署的 K8S 环境改用 `*.ai.ict.cmcc`。**两套环境并存**，
+故域名不写死：默认指向新环境，可随时切回旧环境或指向其他环境。
+
+| 用途 | 旧环境 | 新环境（默认） |
+|---|---|---|
+| HiMarket 门户（`baseUrl`） | `http://ai-market.ict.cmcc` | `http://market.ai.ict.cmcc` |
+| 岗位网关（`gatewayUrl`） | `http://ai-job.ict.cmcc` | `http://gateway.ai.ict.cmcc` |
+| 数字员工花名册 | `http://ai-roster.ict.cmcc` | `http://roster.ai.ict.cmcc` |
+| 启动器配置中心 | `http://ai-conf.ict.cmcc` | `http://conf.ai.ict.cmcc` |
+
+覆盖优先级（低 → 高）：
+
+1. 内置默认（新环境 `*.ai.ict.cmcc`）
+2. 环境变量 `DSH_DEPLOY_ENV=legacy` 整体切回旧环境；或 `DSH_DOMAIN_SUFFIX=<后缀>` 只换后缀
+3. 环境变量 `DSH_HIMARKET_BASE_URL` / `DSH_HIMARKET_GATEWAY_URL` 给整条 URL
+4. `cordis.patch.yml` 行 config 的 `baseUrl` / `gatewayUrl`
+5. 设置页「HiMarket」卡片（`settings.yaml` 的 `himarket` namespace，最高）
+
+```bash
+# 切回旧环境（任一即可）
+export DSH_DEPLOY_ENV=legacy
+export DSH_HIMARKET_BASE_URL=http://ai-market.ict.cmcc
+# 或在设置页把「HiMarket 地址」改成 http://ai-market.ict.cmcc
+```
 
 ## 架构与实现要点
 

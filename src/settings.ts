@@ -17,7 +17,11 @@ import { requireOfficial } from './resolver.js'
 
 /** Bridge config & credential shape (resolved settings namespace value). */
 export interface HimarketSettings {
-  /** HiMarket backend base URL, e.g. http://ai-market.ict.cmcc (no trailing slash). */
+  /**
+   * HiMarket backend base URL, no trailing slash.
+   * 默认值由 domain.ts 按部署环境档位给出：新 K8S 环境 http://market.ai.ict.cmcc，
+   * 旧环境 http://ai-market.ict.cmcc（DSH_DEPLOY_ENV=legacy 或显式配置切换）。
+   */
   baseUrl: string
   /** Developer account username. */
   username: string
