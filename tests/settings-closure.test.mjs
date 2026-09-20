@@ -27,18 +27,23 @@ function makeFakeSchemasteryDir() {
   const pkgDir = join(dir, 'node_modules', '@deepseek-ai', 'schemastery')
   mkdirSync(pkgDir, { recursive: true })
   const fake = `\
-// 真实 schemastery 的 CJS 形态：module.exports 即 Schema（含 string/object 等）。
+// 真实 schemastery 的 CJS 形态：module.exports 即 Schema（含 string/boolean/object 等）。
 function str() {
   const s = (v) => (v === undefined ? '' : v)
   s.default = (d) => (s.dv = d, s)
   return s
+}
+function bool() {
+  const b = (v) => (v === undefined ? false : v)
+  b.default = (d) => (b.dv = d, b)
+  return b
 }
 function obj(fields) {
   const o = (v) => (v === undefined ? {} : v)
   o.default = (d) => (o.dv = d, o)
   return o
 }
-module.exports = { string: str, object: obj }
+module.exports = { string: str, boolean: bool, object: obj }
 `
   writeFileSync(join(pkgDir, 'index.js'), fake)
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/schemastery', version: '0.0.0-fake', main: 'index.js' }))

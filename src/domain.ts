@@ -102,3 +102,53 @@ export function defaultJobUrl(): string {
   if (jobOverride !== '') return jobOverride.replace(/\/+$/u, '')
   return serviceUrl('job', 'DSH_HIMARKET_GATEWAY_URL')
 }
+
+/**
+ * 默认 Keycloak issuer（一键登录用）。
+ *
+ * 与 launcher `activation.rs` 的 `ActivationConfig::default()` 及
+ * `env_defaults.rs` 的 `matrix-activation.keycloakIssuer` 保持**同一个值**：
+ * 两边登录的是同一个 realm、同一个 client，值不一致会导致换票失败。
+ *
+ * 为什么插件内置默认（而不是等 launcher 下发）：设计文档 D3 —— 为了让
+ * 「只升插件」即可用（G5）。`himarket.ssoIssuer` 仍可覆盖，供运维统一改。
+ */
+export const DEFAULT_SSO_ISSUER = 'https://auth.ict.cmcc/realms/employees'
+
+/**
+ * 默认 Keycloak client id（一键登录用）。
+ *
+ * `matrix-twin-activation` 是 **public client** 且启用 PKCE(S256)，
+ * 其 `redirectUris` 已注册 `127.0.0.1:45813|45814|45815/callback`
+ * —— 这是插件能独立完成登录的**唯一依据**（见设计文档 §3.3）。
+ */
+export const DEFAULT_SSO_CLIENT_ID = 'matrix-twin-activation'
+
+/** 解析生效的 SSO issuer：settings 显式值 > 环境变量 > 内置默认。 */
+export function resolveSsoIssuer(configured: string): string {
+  const fromSettings = configured.trim()
+  if (fromSettings !== '') return fromSettings.replace(/\/+$/u, '')
+  return DEFAULT_SSO_ISSUER
+}
+
+/** 解析生效的 SSO client id：settings 显式值 > 环境变量 > 内置默认。 */
+export function resolveSsoClientId(configured: string): string {
+  const fromSettings = configured.trim()
+  if (fromSettings !== '') return fromSettings
+  return DEFAULT_SSO_CLIENT_ID
+}
+
+/**
+ * 调试开关：是否允许手工账密登录（默认**关闭**，账密框只读）。
+ *
+ * 语义：环境变量与 settings 键**取或**（设计文档 D4）。
+ * 环境变量优先是为了「研发临时调试不改 settings.yaml」：
+ *   DSH_HIMARKET_ALLOW_PASSWORD=1
+ * settings 键 `himarket.allowPasswordLogin: true` 供运维统一下发。
+ */
+export function allowPasswordLogin(configured: boolean): boolean {
+  const fromEnv = env('DSH_HIMARKET_ALLOW_PASSWORD').toLowerCase()
+  if (fromEnv === '1' || fromEnv === 'true' || fromEnv === 'yes' || fromEnv === 'on') return true
+  return configured
+}
+

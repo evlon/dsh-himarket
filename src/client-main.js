@@ -27,11 +27,11 @@ const NS = 'settings.himarket'
 const zh = {
   tab: 'HiMarket',
   title: 'HiMarket 能力市场',
-  subtitle: '填一次地址和账号，点「同步」，就能在对话里用上公司上架的 MCP 工具和技能。',
+  subtitle: '点「一键登录」用公司账号登录，就能在对话里用上公司上架的 MCP 工具和技能。',
   configTitle: '① 连接配置',
   baseUrlLabel: 'HiMarket 地址',
   baseUrlPlaceholder: '例如 http://market.ai.ict.cmcc（旧环境 http://ai-market.ict.cmcc）',
-  usernameLabel: '用户名',
+  usernameLabel: '账号',
   usernamePlaceholder: '开发者账号用户名',
   passwordLabel: '密码',
   passwordPlaceholder: '开发者账号密码',
@@ -39,6 +39,21 @@ const zh = {
   saved: '已保存',
   sync: '同步能力',
   syncing: '同步中…',
+  login: '一键登录',
+  relogin: '重新登录',
+  loggingIn: '等待浏览器授权…',
+  loginCancel: '取消',
+  loginDone: '已登录',
+  loginPending: '请在浏览器中完成登录，完成后本页会自动刷新。',
+  logout: '退出登录',
+  loggedOut: '已退出登录',
+  stateNotLogged: '未登录',
+  stateLoggedIn: '已登录',
+  stateExpired: '登录已过期',
+  stateChecking: '检查中…',
+  debugBadge: '⚠️ 调试模式已开启（可手工填账号密码）',
+  debugHint: '研发/运维调试用。正式使用请关闭：不要设置环境变量 DSH_HIMARKET_ALLOW_PASSWORD，并把设置里的 allowPasswordLogin 置为 false。',
+  readonlyHint: '账号密码默认只读。需要手工登录请开启调试开关（见下方说明）。',
   mcpTitle: '② 已订阅 MCP（同步后自动接入会话）',
   skillTitle: '③ 可安装技能',
   install: '安装',
@@ -65,15 +80,30 @@ const zh = {
 const en = {
   tab: 'HiMarket',
   title: 'HiMarket Capability Market',
-  subtitle: 'Configure once, sync, and use subscribed MCP tools and skills in chat.',
+  subtitle: 'Sign in with your company account, then use subscribed MCP tools and skills in chat.',
   configTitle: '1. Connection',
   baseUrlLabel: 'HiMarket URL',
-  usernameLabel: 'Username',
+  usernameLabel: 'Account',
   passwordLabel: 'Password',
   save: 'Save',
   saved: 'Saved',
   sync: 'Sync',
   syncing: 'Syncing…',
+  login: 'Sign in',
+  relogin: 'Sign in again',
+  loggingIn: 'Waiting for browser…',
+  loginCancel: 'Cancel',
+  loginDone: 'Signed in',
+  loginPending: 'Finish signing in from the browser window; this page refreshes automatically.',
+  logout: 'Sign out',
+  loggedOut: 'Signed out',
+  stateNotLogged: 'Not signed in',
+  stateLoggedIn: 'Signed in',
+  stateExpired: 'Session expired',
+  stateChecking: 'Checking…',
+  debugBadge: '⚠️ Debug mode on (manual account/password enabled)',
+  debugHint: 'For developers/ops debugging only. To disable: unset DSH_HIMARKET_ALLOW_PASSWORD and set allowPasswordLogin=false.',
+  readonlyHint: 'Account and password are read-only by default. Enable the debug switch to sign in manually.',
   mcpTitle: '2. Subscribed MCP (auto-attached)',
   skillTitle: '3. Installable Skills',
   install: 'Install',
@@ -123,6 +153,14 @@ const CSS = [
   ".hm_overrides .hm_desc{margin:0 0 2px 0}",
   ".hm_overrides .hm_list{gap:4px}",
   ".hm_overrides .hm_item{padding:6px 8px}",
+  ".hm_input[readonly]{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:default}",
+  ".hm_state{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--dsw-alias-label-primary)}",
+  ".hm_dot{width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-label-tertiary);flex:none}",
+  ".hm_dot[data-state=LOGGED_IN]{background:var(--dsw-alias-state-success-primary)}",
+  ".hm_dot[data-state=EXPIRED]{background:var(--dsw-alias-state-warning-primary,var(--dsw-alias-state-error-primary))}",
+  ".hm_dot[data-state=NOT_LOGGED]{background:var(--dsw-alias-label-tertiary)}",
+  ".hm_warn{border:1px solid var(--dsw-alias-state-warning-primary,var(--dsw-alias-border-l2));background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
+  ".hm_hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:0}",
 ].join('\n')
 
 function injectCss() {
@@ -158,6 +196,9 @@ function HimarketTab(props) {
   const [password, setPassword] = React.useState('')
   const [gatewayUrl, setGatewayUrl] = React.useState('')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
+  // 一键登录：当前 loginId（非 null 表示等待浏览器授权中）
+  const [loginId, setLoginId] = React.useState(null)
+  const pollRef = React.useRef(null)
 
   const refresh = React.useCallback(function () {
     call('/himarket/state').then(function (data) {
@@ -171,6 +212,80 @@ function HimarketTab(props) {
   }, [])
 
   React.useEffect(function () { refresh() }, [refresh])
+
+  // 组件卸载：停止轮询，避免泄漏
+  React.useEffect(function () {
+    return function () { if (pollRef.current !== null) clearInterval(pollRef.current) }
+  }, [])
+
+  function stopPolling() {
+    if (pollRef.current !== null) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  /**
+   * 轮询登录结果。成功后 host 已写入 token 并自动同步，这里只刷新界面。
+   * 用 setInterval 而非递归 setTimeout：与 host 的 120s 超时解耦，实现简单。
+   */
+  function startPolling(id) {
+    stopPolling()
+    pollRef.current = setInterval(function () {
+      call('/himarket/login-status?loginId=' + encodeURIComponent(id)).then(function (data) {
+        if (data.status === 'success') {
+          stopPolling()
+          setLoginId(null)
+          setMessage(data.summary ? t('loginDone') + '：' + data.summary : t('loginDone'))
+          refresh()
+        } else if (data.status === 'failed') {
+          stopPolling()
+          setLoginId(null)
+          setMessage(t('error') + '：' + (data.error || ''))
+          refresh()
+        }
+      }, function () { /* 轮询失败静默重试，不打扰用户 */ })
+    }, 1500)
+  }
+
+  function doLogin() {
+    // ⚠️ 关键：必须在**点击的同步执行栈内**先开一个占位窗口。
+    // 若等 login-start 的 Promise 回调里再 window.open，已脱离用户手势，
+    // 会被浏览器当弹窗拦截（设计文档 R3）。拿到 authUrl 后再给占位窗改地址。
+    var win = null
+    try { win = window.open('about:blank', '_blank') } catch (e) { win = null }
+    setMessage(t('loginPending'))
+    setBusy(true)
+    call('/himarket/login-start', {}).then(function (data) {
+      setBusy(false)
+      setLoginId(data.loginId)
+      if (win !== null && !win.closed) {
+        win.location.href = data.authUrl
+      } else {
+        // 占位窗被拦截或已关闭：给出可手动打开的地址，不让用户卡死
+        setMessage(t('error') + '：浏览器拦截了新窗口，请手动访问 ' + data.authUrl)
+      }
+      startPolling(data.loginId)
+    }, function (err) {
+      setBusy(false)
+      if (win !== null && !win.closed) win.close()
+      setMessage(t('error') + '：' + err.message)
+    })
+  }
+
+  function cancelLogin() {
+    var id = loginId
+    stopPolling()
+    setLoginId(null)
+    if (id !== null) call('/himarket/login-cancel', { loginId: id }).catch(function () {})
+  }
+
+  function doLogout() {
+    setBusy(true)
+    call('/himarket/logout', {}).then(function () {
+      setBusy(false); setMessage(t('loggedOut')); refresh()
+    }, function (err) { setBusy(false); setMessage(t('error') + '：' + err.message) })
+  }
 
   function saveConfig() {
     setBusy(true)
@@ -208,6 +323,20 @@ function HimarketTab(props) {
   const activeNames = (data && data.activeMcpNames) || []
   const publishedSkills = (data && data.publishedSkills) || []
   const installedSkills = (data && data.installedSkills) || []
+  // 登录态：host 计算（loginStateOf），默认未登录（避免首帧误显示「已登录」）
+  const loginState = (data && data.loginState) || 'NOT_LOGGED'
+  const loginUsername = (data && data.loginUsername) || ''
+  const allowPassword = !!(data && data.allowPasswordLogin)
+  const pending = loginId !== null
+
+  function stateLabel() {
+    if (state.status === 'loading') return t('stateChecking')
+    if (loginState === 'LOGGED_IN') {
+      return loginUsername !== '' ? t('stateLoggedIn') + '（' + loginUsername + '）' : t('stateLoggedIn')
+    }
+    if (loginState === 'EXPIRED') return t('stateExpired')
+    return t('stateNotLogged')
+  }
 
   function isInstalled(skill) {
     const name = skill && skill.name
@@ -264,20 +393,49 @@ function HimarketTab(props) {
     ),
     el('div', { className: 'hm_field' },
       el('label', null, t('usernameLabel')),
-      el('input', { className: 'hm_input', type: 'text', placeholder: t('usernamePlaceholder'), value: username, onChange: (e) => setUsername(e.target.value) }),
+      el('input', {
+        className: 'hm_input', type: 'text', placeholder: t('usernamePlaceholder'),
+        value: username, readOnly: !allowPassword,
+        onChange: allowPassword ? (e) => setUsername(e.target.value) : undefined,
+      }),
     ),
     el('div', { className: 'hm_field' },
       el('label', null, t('passwordLabel')),
-      el('input', { className: 'hm_input', type: 'password', placeholder: t('passwordPlaceholder'), value: password, onChange: (e) => setPassword(e.target.value) }),
+      el('input', {
+        className: 'hm_input', type: 'password', placeholder: t('passwordPlaceholder'),
+        value: password, readOnly: !allowPassword,
+        onChange: allowPassword ? (e) => setPassword(e.target.value) : undefined,
+      }),
     ),
+    el('div', { className: 'hm_row' },
+      el('span', { className: 'hm_state' },
+        el('span', { className: 'hm_dot', 'data-state': state.status === 'loading' ? 'NOT_LOGGED' : loginState }),
+        stateLabel(),
+      ),
+    ),
+    allowPassword
+      ? el('div', { className: 'hm_warn' }, t('debugBadge'), el('br', null), t('debugHint'))
+      : el('p', { className: 'hm_hint' }, t('readonlyHint')),
     el('div', { className: 'hm_field' },
       el('label', null, t('gatewayLabel')),
       el('input', { className: 'hm_input', type: 'text', placeholder: t('gatewayPlaceholder'), value: gatewayUrl, onChange: (e) => setGatewayUrl(e.target.value) }),
     ),
     el('div', { className: 'hm_row' },
-      el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: saveConfig }, t('save')),
-      el('button', { className: 'hm_btn', type: 'button', 'data-primary': 'true', disabled: busy, onClick: doSync }, busy ? t('syncing') : t('sync')),
+      // 主按钮：未登录→一键登录；已登录→重新登录（G6 过期可自助恢复）
+      pending
+        ? el('button', { className: 'hm_btn', type: 'button', onClick: cancelLogin }, t('loginCancel'))
+        : el('button', { className: 'hm_btn', type: 'button', 'data-primary': 'true', disabled: busy, onClick: doLogin },
+          loginState === 'LOGGED_IN' ? t('relogin') : t('login')),
+      loginState === 'LOGGED_IN' && !pending
+        ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doLogout }, t('logout'))
+        : null,
+      // 调试态才出现「保存配置」（默认态 UI 面收敛为只能一键登录）
+      allowPassword
+        ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: saveConfig }, t('save'))
+        : null,
+      el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doSync }, busy ? t('syncing') : t('sync')),
     ),
+    pending ? el('p', { className: 'hm_message' }, t('loggingIn')) : null,
     message !== null ? el('p', { className: 'hm_message', 'data-error': message.indexOf(t('error')) === 0 ? 'true' : undefined }, message) : null,
 
     el('h3', null, t('mcpTitle')),

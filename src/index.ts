@@ -17,13 +17,21 @@ import type { Context } from '@deepseek-ai/cordis'
 import { HimarketClient } from './himarket-client.js'
 import type { PublishedSkill, SubscribedMcp } from './himarket-client.js'
 import { McpManager } from './mcp.js'
-import { attachSettings, hasCredentials, credentialsFingerprint } from './settings.js'
-import type { HimarketSettings } from './settings.js'
+import { attachSettings, hasCredentials, credentialsFingerprint, loginStateOf } from './settings.js'
+import type { HimarketSettings, LoginState } from './settings.js'
 import { installSkill, defaultSkillRoot } from './skill.js'
 import { packageLocalJob } from './publish.js'
 import type { PublishPackageResult } from './publish.js'
 import { registerHimarketTools } from './tools.js'
-import { defaultBaseUrl, defaultJobUrl } from './domain.js'
+import {
+  defaultBaseUrl,
+  defaultJobUrl,
+  allowPasswordLogin,
+  resolveSsoIssuer,
+  resolveSsoClientId,
+} from './domain.js'
+import { SsoLoginManager } from './sso-login.js'
+import type { SsoConfig } from './sso-login.js'
 
 export const name = 'himarket'
 
@@ -49,6 +57,12 @@ interface BridgeState {
   publishedSkills: PublishedSkill[]
   installedSkills: string[]
   lastError: string
+  /** 设置页登录态（设计文档 §5.1 状态机）。 */
+  loginState: LoginState
+  /** 展示用登录用户名（token 里的 preferred_username，或手工账密）。 */
+  loginUsername: string
+  /** 调试开关是否开启（决定设置页账密框可编辑性）。 */
+  allowPasswordLogin: boolean
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -66,9 +80,28 @@ export function apply(ctx: Context, config: Config): void {
     portalId: '',
     gatewayUrl: config.gatewayUrl?.trim() || defaultJobUrl(),
     skillInstallDir: config.skillInstallDir ?? '',
+    // 一键登录参数：空 → domain.ts 内置默认（见 resolveSsoIssuer/resolveSsoClientId）。
+    ssoIssuer: '',
+    ssoClientId: '',
+    // 调试开关默认关闭：账密框只读，只能一键登录（设计文档 §5.2）。
+    allowPasswordLogin: false,
   }
 
   const settings = attachSettings(ctx, fallback, baseUrl)
+
+  /** 一键登录会话管理器（每 loginId 一个回调 server + 定时器）。 */
+  const sso = new SsoLoginManager()
+
+  /** 当前生效的调试开关：settings 键与环境变量取或（设计文档 D4）。 */
+  const passwordLoginAllowed = (): boolean =>
+    allowPasswordLogin(settings.current().allowPasswordLogin)
+
+  /** 组装 SSO 登录参数：settings 显式值优先，否则回退内置默认（D3）。 */
+  const ssoConfig = (): SsoConfig => ({
+    issuer: resolveSsoIssuer(settings.current().ssoIssuer),
+    clientId: resolveSsoClientId(settings.current().ssoClientId),
+    baseUrl: settings.current().baseUrl,
+  })
 
   let client: HimarketClient | undefined
   let mcpManager: McpManager | undefined
@@ -327,6 +360,7 @@ export function apply(ctx: Context, config: Config): void {
 
   async function snapshot(): Promise<BridgeState> {
     const s = settings.current()
+    const allowPwd = passwordLoginAllowed()
     return {
       // SSO（有 token）或账密（username+password）任一成立即为已配置
       configured: hasCredentials(s),
@@ -340,6 +374,9 @@ export function apply(ctx: Context, config: Config): void {
       publishedSkills,
       installedSkills: [...installedSkills],
       lastError,
+      loginState: loginStateOf(s, allowPwd),
+      loginUsername: s.username,
+      allowPasswordLogin: allowPwd,
     }
   }
 
@@ -476,6 +513,58 @@ export function apply(ctx: Context, config: Config): void {
             sendJson(res, 200, { ok: true, summary })
             return
           }
+          // ---- 一键登录（Keycloak SSO + PKCE，见 sso-login.ts）----
+          if (method === 'POST' && pathname === '/himarket/login-start') {
+            const cfg = ssoConfig()
+            if (cfg.baseUrl.trim() === '') {
+              sendError(res, 400, '还没配置 HiMarket 地址，请先在设置里填「HiMarket 地址」')
+              return
+            }
+            const started = await sso.start(cfg)
+            sendJson(res, 200, { ok: true, ...started })
+            return
+          }
+          if (method === 'GET' && pathname === '/himarket/login-status') {
+            const loginId = url.searchParams.get('loginId') ?? ''
+            const result = sso.status(loginId)
+            // 成功后：取走 token 写 settings（token 不回传浏览器），丢弃缓存 client
+            // 并自动同步一次 —— 登录即可用，无需用户再点「同步能力」。
+            if (result.status === 'success' && result.username !== '') {
+              const token = sso.takeToken(loginId)
+              if (token !== '') {
+                await settings.save({ token, username: result.username })
+                client = undefined
+                clientFingerprint = ''
+                const summary = await sync()
+                sendJson(res, 200, { ok: true, ...result, summary })
+                return
+              }
+            }
+            sendJson(res, 200, { ok: true, ...result })
+            return
+          }
+          if (method === 'POST' && pathname === '/himarket/login-cancel') {
+            const body = await readBody()
+            const loginId = typeof body.loginId === 'string' ? body.loginId : ''
+            sso.cancel(loginId)
+            sendJson(res, 200, { ok: true })
+            return
+          }
+          if (method === 'POST' && pathname === '/himarket/logout') {
+            // 只清 token：保留 username/password，使账密兜底仍可用（设计文档 §7）。
+            // 开关关闭时 loginState 会变为 EXPIRED，UI 显示「登录已过期」+ 重新登录。
+            await settings.save({ token: '' })
+            client = undefined
+            clientFingerprint = ''
+            mcpManager?.dispose()
+            mcpManager = undefined
+            subscribedMcps = []
+            publishedSkills = []
+            installedSkills = new Set()
+            lastError = ''
+            sendJson(res, 200, { ok: true })
+            return
+          }
           sendError(res, 404, '未知的 /himarket 端点')
         } catch (error) {
           sendError(res, 500, error instanceof Error ? error.message : String(error))
@@ -489,6 +578,8 @@ export function apply(ctx: Context, config: Config): void {
       mcpManager?.dispose()
       mcpManager = undefined
       client = undefined
+      // 释放一键登录的回调 server 与定时器（否则插件卸载后端口不释放）
+      sso.dispose()
     }
   }, 'himarket.dispose')
 }

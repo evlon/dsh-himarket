@@ -41,6 +41,20 @@ export interface HimarketSettings {
   gatewayUrl: string
   /** Skill install root; empty falls back to ~/.dsh/skills. */
   skillInstallDir: string
+  /**
+   * Keycloak issuer（一键登录用）；空则回退 domain.ts 的 DEFAULT_SSO_ISSUER。
+   * 供运维统一改 realm 用，普通用户无需关心。
+   */
+  ssoIssuer: string
+  /**
+   * Keycloak client id（一键登录用）；空则回退 domain.ts 的 DEFAULT_SSO_CLIENT_ID。
+   */
+  ssoClientId: string
+  /**
+   * 调试开关：是否允许手工账密登录（默认 false → 账密框只读，只能一键登录）。
+   * 与环境变量 DSH_HIMARKET_ALLOW_PASSWORD 取或（见 domain.ts 的 allowPasswordLogin）。
+   */
+  allowPasswordLogin: boolean
 }
 
 /** Settings namespace name. */
@@ -81,6 +95,36 @@ export function credentialsFingerprint(s: {
   return [s.baseUrl, s.token, s.username, s.password].join('\u0000')
 }
 
+/** 设置页展示的登录态（设计文档 §5.1 状态机）。 */
+export type LoginState =
+  /** 无任何凭据，需一键登录。 */
+  | 'NOT_LOGGED'
+  /** 有 token（launcher 或插件写入）→ 已登录。 */
+  | 'LOGGED_IN'
+  /** 有账密但无 token，且账密兜底被禁用 → 需重新登录。 */
+  | 'EXPIRED'
+
+/**
+ * 计算展示用登录态（纯函数，便于单测）。
+ *
+ * 判定顺序：
+ *   ① 有 token               → LOGGED_IN（无论账密是否存在）
+ *   ② 无 token 但有账密       → 账密兜底开启时视为可用；否则 EXPIRED（引导一键登录）
+ *   ③ 都没有                 → NOT_LOGGED
+ *
+ * 为什么 ② 要区分开关：调试开关关闭时账密只是「过渡兜底」，UI 不该显示成已登录
+ * （否则用户以为登录了却因 token 缺失而 401）。
+ */
+export function loginStateOf(
+  s: { token: string; username: string; password: string },
+  passwordFallbackEnabled: boolean,
+): LoginState {
+  if (s.token.trim() !== '') return 'LOGGED_IN'
+  const hasPassword = s.username.trim() !== '' && s.password.trim() !== ''
+  if (hasPassword) return passwordFallbackEnabled ? 'LOGGED_IN' : 'EXPIRED'
+  return 'NOT_LOGGED'
+}
+
 /** Narrow settings service interface (only the members this bridge uses). */
 interface SettingsLike {
   register<T>(ns: string, schema: unknown, options?: { base?: unknown }): {
@@ -95,6 +139,7 @@ interface SettingsLike {
 interface SchemasteryLike {
   object(fields: Record<string, unknown>): unknown
   string(): { default(value: string): unknown }
+  boolean(): { default(value: boolean): unknown }
 }
 
 /**
@@ -134,6 +179,11 @@ export function attachSettings(
         portalId: Schema.string().default(''),
         gatewayUrl: Schema.string().default(''),
         skillInstallDir: Schema.string().default(''),
+        // 一键登录（SSO）参数：空则回退 domain.ts 内置默认。
+        ssoIssuer: Schema.string().default(''),
+        ssoClientId: Schema.string().default(''),
+        // 调试开关：默认 false（账密框只读，只能一键登录）。
+        allowPasswordLogin: Schema.boolean().default(false),
       })
       const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
       resolved = () => scopeHandle.get()
