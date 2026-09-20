@@ -46,6 +46,41 @@ export interface HimarketSettings {
 /** Settings namespace name. */
 export const NAMESPACE = 'himarket'
 
+/**
+ * 是否具备可用凭据：两种模式（可并存）
+ *   ① SSO 模式：有 token（启动器「一键登录」写入，7 天有效）—— 无需用户名/密码；
+ *   ② 账密模式：username + password 齐全（兜底，或 SSO 不可用时手工填）。
+ * baseUrl 为空、或两种模式都没有 → false。
+ *
+ * 抽成纯函数：便于单测，且被 buildClient / ensureReady / snapshot 三处共用，
+ * 避免「配置判定」逻辑分散导致行为不一致。
+ */
+export function hasCredentials(s: {
+  baseUrl: string
+  username: string
+  password: string
+  token: string
+}): boolean {
+  if (s.baseUrl.trim() === '') return false
+  return s.token.trim() !== '' || (s.username.trim() !== '' && s.password.trim() !== '')
+}
+
+/**
+ * 凭据指纹：baseUrl + token + username + password 拼接。
+ *
+ * 为什么需要：HimarketClient 在构造时**快照** token，且插件把它缓存为单例。
+ * 启动器「一键登录」是**外部进程**写 settings.yaml（settings 服务热加载），
+ * 若不比对指纹，插件会一直用旧 token（过期后表现为持续 401）。
+ */
+export function credentialsFingerprint(s: {
+  baseUrl: string
+  token: string
+  username: string
+  password: string
+}): string {
+  return [s.baseUrl, s.token, s.username, s.password].join('\u0000')
+}
+
 /** Narrow settings service interface (only the members this bridge uses). */
 interface SettingsLike {
   register<T>(ns: string, schema: unknown, options?: { base?: unknown }): {

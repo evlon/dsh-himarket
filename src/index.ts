@@ -17,7 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { HimarketClient } from './himarket-client.js'
 import type { PublishedSkill, SubscribedMcp } from './himarket-client.js'
 import { McpManager } from './mcp.js'
-import { attachSettings } from './settings.js'
+import { attachSettings, hasCredentials, credentialsFingerprint } from './settings.js'
 import type { HimarketSettings } from './settings.js'
 import { installSkill, defaultSkillRoot } from './skill.js'
 import { packageLocalJob } from './publish.js'
@@ -76,6 +76,38 @@ export function apply(ctx: Context, config: Config): void {
   let publishedSkills: PublishedSkill[] = []
   let installedSkills = new Set<string>()
   let lastError = ''
+  /** 上次构建 client 时的凭据指纹；变化则丢弃缓存的 client。 */
+  let clientFingerprint = ''
+
+  /**
+   * 凭据指纹：baseUrl + token + username + password 的拼接。
+   *
+   * 为什么需要：`client` 是缓存单例，且 HimarketClient 在构造时**快照**了 token。
+   * 启动器「一键登录」是**外部进程**写 settings.yaml（settings 服务热加载），
+   * 若不比对指纹，插件会一直用旧 token（过期后表现为持续 401）。
+   */
+  function fingerprintOf(s: HimarketSettings): string {
+    return credentialsFingerprint(s)
+  }
+
+  /** 若 settings 里的凭据变了，丢弃缓存的 client（下次 ensureReady 会重建）。 */
+  function invalidateClientIfStale(): void {
+    const fp = fingerprintOf(settings.current())
+    if (fp !== clientFingerprint) {
+      clientFingerprint = fp
+      client = undefined
+    }
+  }
+
+  // 外部写入（启动器「一键登录」写 settings.yaml）触发热加载 → 立即丢弃缓存 client，
+  // 使下一次 sync/install 用上新 token，无需重启 DSH。
+  ctx.effect(
+    () => settings.onChange(() => {
+      client = undefined
+      clientFingerprint = ''
+    }),
+    'himarket.settings-watch',
+  )
   /** 网关返回的来源/覆盖详情：productId → { source, overrides, overriddenBy } */
   interface SourceDetail {
     source: 'OFFICIAL' | 'COMMUNITY'
@@ -119,11 +151,15 @@ export function apply(ctx: Context, config: Config): void {
     return dir.trim() === '' ? defaultSkillRoot() : dir
   }
 
+  /**
+   * 是否具备可用凭据：见 settings.ts 的 hasCredentials（纯函数，已单测覆盖）。
+   * 保留薄封装以便与本文件其它 helper 命名一致。
+   */
+  const hasCreds = (s: HimarketSettings): boolean => hasCredentials(s)
+
   function buildClient(): HimarketClient | undefined {
     const s = settings.current()
-    if (s.baseUrl.trim() === '' || s.username.trim() === '' || s.password.trim() === '') {
-      return undefined
-    }
+    if (!hasCreds(s)) return undefined
     return new HimarketClient({
       baseUrl: s.baseUrl,
       username: s.username,
@@ -136,14 +172,20 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   async function ensureReady(): Promise<HimarketClient> {
+    // 先按最新 settings 判断缓存是否过期（启动器可能刚写入新 token）
+    invalidateClientIfStale()
     const s = settings.current()
     if (s.baseUrl.trim() === '') throw new Error('还没配置 HiMarket 地址，请先在设置里填「HiMarket 地址」')
-    if (s.username.trim() === '' || s.password.trim() === '') {
-      throw new Error('还没配置 HiMarket 账号，请先在设置里填「用户名」和「密码」')
+    if (!hasCredentials(s)) {
+      throw new Error('还没登录 HiMarket：请在启动器托盘点「🔑 HiMarket 一键登录」，或在设置里填「用户名」和「密码」')
     }
     if (client === undefined) client = buildClient()!
     if (mcpManager === undefined) mcpManager = new McpManager(ctx, baseUrl)
+    // SSO 模式下已有 token，直接用；账密模式且无 token 才登录换 token。
     if (!client!.hasToken) {
+      if (s.username.trim() === '' || s.password.trim() === '') {
+        throw new Error('HiMarket 登录已失效，请在启动器托盘点「🔑 HiMarket 一键登录」重新登录')
+      }
       const token = await client!.login()
       await settings.save({ token })
     }
@@ -286,7 +328,8 @@ export function apply(ctx: Context, config: Config): void {
   async function snapshot(): Promise<BridgeState> {
     const s = settings.current()
     return {
-      configured: s.baseUrl.trim() !== '' && s.username.trim() !== '' && s.password.trim() !== '',
+      // SSO（有 token）或账密（username+password）任一成立即为已配置
+      configured: hasCredentials(s),
       loggedIn: (client?.hasToken ?? false) || s.token !== '',
       baseUrl: s.baseUrl,
       username: s.username,
@@ -394,6 +437,7 @@ export function apply(ctx: Context, config: Config): void {
             await settings.save(patch)
             // 凭证变化：丢弃旧 client（含旧 token）；若地址被清空，同时卸载 MCP fiber 并清空内存缓存。
             client = undefined
+            clientFingerprint = ''
             if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
               mcpManager?.dispose()
               mcpManager = undefined
