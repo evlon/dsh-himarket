@@ -152,3 +152,61 @@ export function allowPasswordLogin(configured: boolean): boolean {
   return configured
 }
 
+/**
+ * 「环境地址类」配置键 —— 由服务端统一下发，本地不可改。
+ *
+ * ⚠️ 依据（代码级事实，非推测）：launcher `env_defaults.rs` 的
+ * `FORCE_OVERRIDE_KEYS` 明确包含这两个键：
+ *
+ * ```rust
+ * ("himarket", "baseUrl"),
+ * ("himarket", "gatewayUrl"),
+ * ```
+ *
+ * 语义为「服务端有值就**强制覆盖**本地」（同文件 `:213-215` 注释）。也就是说
+ * 用户在设置页改这两个地址，**下次同步必被覆盖回去** —— 故 UI 与 host 都不该
+ * 允许普通用户改（见设计文档 §13）。
+ */
+export const ADDRESS_KEYS = ['baseUrl', 'gatewayUrl'] as const
+
+/** 地址键名联合类型。 */
+export type AddressKey = (typeof ADDRESS_KEYS)[number]
+
+/** `splitAddressPatch` 的返回形状。 */
+export interface SplitPatchResult<T> {
+  /** 可安全写入的字段（非地址键，或调试态下的全部字段）。 */
+  allowed: Partial<T>
+  /** 被拒绝的地址键（调试开关关闭时才有值）。 */
+  rejected: AddressKey[]
+}
+
+/**
+ * 拆分 save-config 的 patch：把「环境地址类键」与其余字段分开。
+ *
+ * 为什么需要（设计文档 §13.3）：只把浏览器端输入框设成只读**挡不住**同机
+ * 任意进程直接 POST `/himarket/save-config`。host 侧必须同样设防，否则守卫
+ * 形同虚设。
+ *
+ * 语义：调试开关**关闭**时地址键被拒（返回在 `rejected`）；开启时全部放行。
+ * 抽成纯函数以便单测（不依赖 cordis / HTTP 运行时）。
+ *
+ * @param patch      待写入的字段（来自 HTTP body）
+ * @param allowDebug 调试开关是否开启（见 {@link allowPasswordLogin}）
+ */
+export function splitAddressPatch<T extends Record<string, unknown>>(
+  patch: Partial<T>,
+  allowDebug: boolean,
+): SplitPatchResult<T> {
+  if (allowDebug) return { allowed: patch, rejected: [] }
+  const allowed: Partial<T> = {}
+  const rejected: AddressKey[] = []
+  for (const key of Object.keys(patch) as Array<keyof T & string>) {
+    if ((ADDRESS_KEYS as readonly string[]).includes(key)) {
+      rejected.push(key as AddressKey)
+      continue
+    }
+    allowed[key] = patch[key]
+  }
+  return { allowed, rejected }
+}
+

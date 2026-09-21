@@ -21,11 +21,24 @@
 ## 给同事（小白）用：三步
 
 1. 打开 DSH Web → **设置 → HiMarket**。
-2. 填三样：**HiMarket 地址**、**用户名**、**密码**（找 HiMarket 管理员要开发者账号），点「保存」。
-3. 点「**同步能力**」，然后：
+2. 点「**一键登录**」，用公司账号（Keycloak SSO）在浏览器里完成登录 —— 无需手填账号密码。
+3. 登录成功后会自动同步，然后：
    - 已订阅的 MCP 工具会自动出现在对话里，直接说「用 xxx 查一下…」即可；
    - 想装技能，点技能卡片上的「**安装**」，装完在对话里说「帮我用 xx 技能…」。
 
+> **连接地址（HiMarket 地址 / 包装层地址）是只读的**。设置页会在每个地址旁显示**来源徽标**，如实告知该值是谁给的：
+>
+> | 徽标 | 含义 |
+> |---|---|
+> | 服务端下发 | 公司服务器统一下发，每次同步自动覆盖 —— 这是最常见的正常状态 |
+> | 插件内置默认 | 服务端**未**下发此项，当前用的是插件内置默认值（随插件升级更新） |
+> | 本地配置 | 服务端未下发，值是本地自己配的 |
+> | 来源未知 | 找不到启动器的同步记录（本实例可能不是启动器启动的） |
+>
+> 只读的原因：地址由服务端每次同步强制覆盖，本地改了也无效 —— 反而会出现「改了地址后连不上，还不知道为什么」。
+>
+> **确实要改怎么办**：点设置页的「**如何修改？**」展开说明，或直接看下文「调试开关」。
+>
 > 也可以在对话里直接说「同步 HiMarket」或「安装 xx 技能」，效果一样。
 
 ## 给 DSH 管理员：安装
@@ -86,14 +99,44 @@ dsh plugin --profile web add link:E:/path/to/dsh-himarket
 2. 环境变量 `DSH_DEPLOY_ENV=legacy` 整体切回旧环境；或 `DSH_DOMAIN_SUFFIX=<后缀>` 只换后缀
 3. 环境变量 `DSH_HIMARKET_BASE_URL` / `DSH_HIMARKET_GATEWAY_URL` 给整条 URL
 4. `cordis.patch.yml` 行 config 的 `baseUrl` / `gatewayUrl`
-5. 设置页「HiMarket」卡片（`settings.yaml` 的 `himarket` namespace，最高）
+5. 设置页「HiMarket」卡片（`settings.yaml` 的 `himarket` namespace）—— ⚠️ **仅调试态可写**
+
+> ⚠️ **设置页的地址框默认只读**：`baseUrl` / `gatewayUrl` 属**服务端统一下发**项
+> （launcher `env_defaults.rs` 的 `FORCE_OVERRIDE_KEYS`），每次同步会**强制覆盖**本地值。
+> 故默认态下设置页不可改（改也无效），host 侧 `/himarket/save-config` 也会**拒绝**这两个键
+> （返回 403）。运维需要改地址请走 ①~④（服务端下发 / 行 config / 环境变量），
+> 或临时开启调试开关。
+>
+> 📌 **注意区分「服务端下发」与「插件内置默认」**：`FORCE_OVERRIDE_KEYS` 只在服务端
+> **确实下发了该键**时才强制覆盖。若服务端没配 `himarket.baseUrl`，settings.yaml 里的值
+> 其实来自本插件的内置默认（第 1 层），与「服务端下发」无关 —— 两者甚至可能不同
+> （内置 `http://market.ai.ict.cmcc` vs 服务端 `https://market.ai.ict.cmcc`）。
+> 设置页的**来源徽标**就是用来如实区分这一点的，不要只看「只读」就断定是服务端下发的。
 
 ```bash
 # 切回旧环境（任一即可）
 export DSH_DEPLOY_ENV=legacy
 export DSH_HIMARKET_BASE_URL=http://ai-market.ict.cmcc
-# 或在设置页把「HiMarket 地址」改成 http://ai-market.ict.cmcc
 ```
+
+## 调试开关（研发/运维）
+
+默认**关闭** —— 账密框与地址框均只读，只能一键登录。开启后两者都可编辑，
+并出现「保存配置」按钮。两种方式**取或**：
+
+```bash
+# 方式一：环境变量（研发临时调试，不改文件）
+DSH_HIMARKET_ALLOW_PASSWORD=1
+
+# 方式二：settings.yaml 的 himarket 段（运维统一下发，热加载生效）
+# himarket:
+#   allowPasswordLogin: true
+```
+
+**可识别真值**：`1` / `true` / `yes` / `on`（大小写不敏感）。
+
+> ⚠️ Windows + pm2：`pm2 restart` **不会清除已注入的环境变量**，关闭时须显式置空：
+> `DSH_HIMARKET_ALLOW_PASSWORD= pm2 restart <id> --update-env`
 
 ## 架构与实现要点
 

@@ -27,11 +27,14 @@ import {
   defaultBaseUrl,
   defaultJobUrl,
   allowPasswordLogin,
+  splitAddressPatch,
   resolveSsoIssuer,
   resolveSsoClientId,
 } from './domain.js'
 import { SsoLoginManager, ensureInternalCaTrusted } from './sso-login.js'
 import type { SsoConfig } from './sso-login.js'
+import { harnessHome, readServerEnvDefaults, classifyField } from './provenance.js'
+import type { FieldProvenance } from './provenance.js'
 
 export const name = 'himarket'
 
@@ -63,6 +66,16 @@ interface BridgeState {
   loginUsername: string
   /** 调试开关是否开启（决定设置页账密框可编辑性）。 */
   allowPasswordLogin: boolean
+  /**
+   * 环境地址的**来源**（服务端下发 / 内置默认 / 本地 / 未知）。
+   *
+   * 为什么需要（2026-09-21 UE 反馈）：只读框必须能如实说明「这个值是谁给的」，
+   * 否则用户会疑惑「为什么不让填」。见 provenance.ts。
+   */
+  addressProvenance: {
+    baseUrl: FieldProvenance
+    gatewayUrl: FieldProvenance
+  }
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -366,6 +379,10 @@ export function apply(ctx: Context, config: Config): void {
   async function snapshot(): Promise<BridgeState> {
     const s = settings.current()
     const allowPwd = passwordLoginAllowed()
+    // 环境地址来源判定（2026-09-21 UE）：读启动器缓存的「服务端实际下发值」，
+    // 与生效值比对，如实区分「服务端下发 / 内置默认 / 本地 / 未知」。
+    // 读不到（非 launcher 启动的实例）→ UNKNOWN，不猜测。
+    const server = readServerEnvDefaults(harnessHome())
     return {
       // SSO（有 token）或账密（username+password）任一成立即为已配置
       configured: hasCredentials(s),
@@ -382,6 +399,10 @@ export function apply(ctx: Context, config: Config): void {
       loginState: loginStateOf(s, allowPwd),
       loginUsername: s.username,
       allowPasswordLogin: allowPwd,
+      addressProvenance: {
+        baseUrl: classifyField(server, 'himarket', 'baseUrl', s.baseUrl, defaultBaseUrl()),
+        gatewayUrl: classifyField(server, 'himarket', 'gatewayUrl', s.gatewayUrl, defaultJobUrl()),
+      },
     }
   }
 
@@ -471,16 +492,26 @@ export function apply(ctx: Context, config: Config): void {
             if (typeof body.portalId === 'string') patch.portalId = body.portalId
             if (typeof body.skillInstallDir === 'string') patch.skillInstallDir = body.skillInstallDir
             if (typeof body.gatewayUrl === 'string') patch.gatewayUrl = body.gatewayUrl
-            // 地址被清空时，一并清空 token（避免残留旧凭证）。
-            if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
-              patch.token = ''
-              patch.adminToken = ''
+            // ⚠️ 环境地址守卫（设计文档 §13.3）：baseUrl / gatewayUrl 由服务端统一下发
+            // （launcher env_defaults.rs 的 FORCE_OVERRIDE_KEYS 每次同步强制覆盖），
+            // 本地改了也无效。故调试开关关闭时**拒绝**这两个键 —— 只把浏览器端输入框
+            // 设成只读挡不住同机进程直接 POST 本端点，host 侧必须同样设防。
+            const { allowed, rejected } = splitAddressPatch(patch, passwordLoginAllowed())
+            if (rejected.length > 0) {
+              sendError(res, 403, `环境地址（${rejected.join(' / ')}）由服务端统一下发，本地不可修改。如确需调试，请开启调试开关（DSH_HIMARKET_ALLOW_PASSWORD=1 或 himarket.allowPasswordLogin=true）。`)
+              return
             }
-            await settings.save(patch)
+            const safePatch = allowed as Partial<HimarketSettings>
+            // 地址被清空时，一并清空 token（避免残留旧凭证）。
+            if (safePatch.baseUrl !== undefined && safePatch.baseUrl.trim() === '') {
+              safePatch.token = ''
+              safePatch.adminToken = ''
+            }
+            await settings.save(safePatch)
             // 凭证变化：丢弃旧 client（含旧 token）；若地址被清空，同时卸载 MCP fiber 并清空内存缓存。
             client = undefined
             clientFingerprint = ''
-            if (patch.baseUrl !== undefined && patch.baseUrl.trim() === '') {
+            if (safePatch.baseUrl !== undefined && safePatch.baseUrl.trim() === '') {
               mcpManager?.dispose()
               mcpManager = undefined
               subscribedMcps = []

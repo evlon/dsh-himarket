@@ -53,7 +53,30 @@ const zh = {
   stateChecking: '检查中…',
   debugBadge: '⚠️ 调试模式已开启（可手工填账号密码）',
   debugHint: '研发/运维调试用。正式使用请关闭：不要设置环境变量 DSH_HIMARKET_ALLOW_PASSWORD，并把设置里的 allowPasswordLogin 置为 false。',
-  readonlyHint: '账号密码默认只读。需要手工登录请开启调试开关（见下方说明）。',
+  readonlyHint: '账号密码默认只读，请用上方「一键登录」。需要手工登录请开启调试开关（见下方说明）。',
+  // ── 环境地址来源说明（2026-09-21 UE 改造）──
+  // 用户反馈：只读框不给填，却不说清「谁给的、为什么不能填」。故按来源分别说明。
+  addrSourceLabel: '来源：',
+  srcServer: '服务端下发',
+  srcServerDrift: '服务端已下发，本地值待同步覆盖',
+  srcBuiltin: '插件内置默认（服务端未下发）',
+  srcLocal: '本地配置（服务端未下发）',
+  srcUnset: '未配置',
+  srcUnknown: '来源未知',
+  srcServerTip: '该值由公司服务器统一下发，每次同步自动覆盖，因此本地不可修改。',
+  srcBuiltinTip: '服务端未下发此项，当前用的是插件内置默认值。它会随插件升级更新，本地同样不可改。',
+  srcLocalTip: '服务端未下发此项，当前值来自本地配置。如需统一管理，请让管理员在配置中心下发。',
+  srcUnknownTip: '未找到启动器的同步记录（本实例可能不是由启动器启动的），无法判定该值来源。',
+  syncAtLabel: '最近同步：',
+  addrDebugHint: '如需手工改这两个地址，请开启调试开关：设环境变量 DSH_HIMARKET_ALLOW_PASSWORD=1（研发临时用），或让运维在配置中心下发 himarket.allowPasswordLogin=true。',
+  showHowTo: '如何修改？',
+  hideHowTo: '收起',
+  howToTitle: '这些值为什么不给填、以及确实要改时怎么做',
+  howToServer: '① 正常情况（推荐）：不用改。地址由公司服务器统一下发，每次同步自动覆盖本地 —— 这正是「不让填」的原因，避免有人改了地址后连不上还不知道为什么。',
+  howToDebug: '② 研发/运维调试：开启调试开关后，这些框会变为可编辑，且会出现「保存配置」按钮。开启方式（二选一）：',
+  howToDebugEnv: '临时用：设环境变量 DSH_HIMARKET_ALLOW_PASSWORD=1 后重启 DSH',
+  howToDebugCfg: '统一用：让管理员在配置中心下发 himarket.allowPasswordLogin=true',
+  howToWarn: '⚠️ 调试开关只影响本机能否编辑。服务端下次同步仍会覆盖这两个地址 —— 要长期生效，请改服务端配置。',
   mcpTitle: '② 已订阅 MCP（同步后自动接入会话）',
   skillTitle: '③ 可安装技能',
   install: '安装',
@@ -103,7 +126,28 @@ const en = {
   stateChecking: 'Checking…',
   debugBadge: '⚠️ Debug mode on (manual account/password enabled)',
   debugHint: 'For developers/ops debugging only. To disable: unset DSH_HIMARKET_ALLOW_PASSWORD and set allowPasswordLogin=false.',
-  readonlyHint: 'Account and password are read-only by default. Enable the debug switch to sign in manually.',
+  readonlyHint: 'Account and password are read-only by default; use "Sign in" above. Enable the debug switch to sign in manually.',
+  addrSourceLabel: 'Source: ',
+  srcServer: 'Issued by server',
+  srcServerDrift: 'Issued by server (local value pending overwrite)',
+  srcBuiltin: 'Plugin built-in default (server did not issue)',
+  srcLocal: 'Local configuration (server did not issue)',
+  srcUnset: 'Not configured',
+  srcUnknown: 'Source unknown',
+  srcServerTip: 'This value is issued centrally by the company server and overwritten on every sync, so it cannot be edited locally.',
+  srcBuiltinTip: 'The server does not issue this key; the current value is the plugin built-in default. It follows plugin upgrades and is likewise not editable locally.',
+  srcLocalTip: 'The server does not issue this key; the current value comes from local configuration. Ask an admin to issue it centrally if it should be managed.',
+  srcUnknownTip: 'No launcher sync record was found (this instance may not have been started by the launcher), so the origin cannot be determined.',
+  syncAtLabel: 'Last sync: ',
+  addrDebugHint: 'To edit these two URLs manually, enable the debug switch: set DSH_HIMARKET_ALLOW_PASSWORD=1 (temporary, for developers), or have ops issue himarket.allowPasswordLogin=true from the config center.',
+  showHowTo: 'How do I change these?',
+  hideHowTo: 'Hide',
+  howToTitle: 'Why these values are not editable, and how to change them if you really must',
+  howToServer: '(1) Normal case (recommended): nothing to change. URLs are issued centrally and overwritten on every sync — that is exactly why they are read-only, so nobody breaks connectivity by editing them without knowing.',
+  howToDebug: '(2) Developer/ops debugging: with the debug switch on, these fields become editable and a "Save" button appears. Enable it either way:',
+  howToDebugEnv: 'Temporary: set DSH_HIMARKET_ALLOW_PASSWORD=1 and restart DSH',
+  howToDebugCfg: 'Central: have an admin issue himarket.allowPasswordLogin=true from the config center',
+  howToWarn: '⚠️ The debug switch only affects local editing. The next server sync still overwrites these URLs — change the server config for a lasting effect.',
   mcpTitle: '2. Subscribed MCP (auto-attached)',
   skillTitle: '3. Installable Skills',
   install: 'Install',
@@ -161,6 +205,18 @@ const CSS = [
   ".hm_dot[data-state=NOT_LOGGED]{background:var(--dsw-alias-label-tertiary)}",
   ".hm_warn{border:1px solid var(--dsw-alias-state-warning-primary,var(--dsw-alias-border-l2));background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:8px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
   ".hm_hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary);margin:0}",
+  // ── 配置来源徽标（2026-09-21 UE）──
+  ".hm_origin{font-size:11px;line-height:16px;font-weight:400;border-radius:999px;padding:1px 8px;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary);cursor:help}",
+  ".hm_origin[data-tone=server]{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}",
+  ".hm_origin[data-tone=warn]{border-color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-border-l2));color:var(--dsw-alias-state-warning-primary,var(--dsw-alias-label-secondary))}",
+  ".hm_origin[data-tone=muted]{opacity:.85}",
+  // ── 「如何修改」折叠区 ──
+  ".hm_howto{display:flex;flex-direction:column;gap:8px}",
+  ".hm_link{align-self:flex-start;background:none;border:none;padding:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-business-primary);cursor:pointer;text-align:left}",
+  ".hm_link:hover{text-decoration:underline}",
+  ".hm_howtoBody{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}",
+  ".hm_howtoList{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
+  ".hm_howtoBody code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;background:var(--dsw-alias-bg-layer-3);border:1px solid var(--dsw-alias-border-l2);border-radius:4px;padding:0 4px}",
 ].join('\n')
 
 function injectCss() {
@@ -196,8 +252,6 @@ function HimarketTab(props) {
   const [password, setPassword] = React.useState('')
   const [gatewayUrl, setGatewayUrl] = React.useState('')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
-  // 服务端当前生效的地址值：用于判断地址是否被改过（见 addrDirty）。
-  const loadedAddr = React.useRef({ baseUrl: '', gatewayUrl: '' })
   // 一键登录：当前 loginId（非 null 表示等待浏览器授权中）
   const [loginId, setLoginId] = React.useState(null)
   const pollRef = React.useRef(null)
@@ -205,9 +259,9 @@ function HimarketTab(props) {
   const refresh = React.useCallback(function () {
     call('/himarket/state').then(function (data) {
       setState({ status: 'ready', data })
-      if (data && data.baseUrl) { setBaseUrl(data.baseUrl); loadedAddr.current.baseUrl = data.baseUrl }
+      if (data && data.baseUrl) setBaseUrl(data.baseUrl)
       if (data && data.username) setUsername(data.username)
-      if (data && data.gatewayUrl) { setGatewayUrl(data.gatewayUrl); loadedAddr.current.gatewayUrl = data.gatewayUrl }
+      if (data && data.gatewayUrl) setGatewayUrl(data.gatewayUrl)
     }, function (err) {
       setState({ status: 'error', error: err.message })
     })
@@ -291,17 +345,12 @@ function HimarketTab(props) {
 
   function saveConfig() {
     setBusy(true)
-    // ⚠️ 默认态（账密只读）**只提交地址字段**，绝不带上 username/password：
-    // 那两个 state 在默认态恒为空串，而 host 见到 string 就写入 —— 一并提交会把
-    // 用户已存的账密兜底清空（实测过 save-config 的写入语义）。
-    var patch = allowPassword
-      ? { baseUrl: baseUrl, username: username, password: password, gatewayUrl: gatewayUrl }
-      : { baseUrl: baseUrl, gatewayUrl: gatewayUrl }
+    // 「保存配置」按钮仅在调试态出现，故此分支必然 allowPassword=true：
+    // 地址与账密一并提交。默认态下该按钮不渲染，saveConfig 不会被调用
+    // （host 侧另有守卫，见设计文档 §13.3）。
+    var patch = { baseUrl: baseUrl, username: username, password: password, gatewayUrl: gatewayUrl }
     call('/himarket/save-config', patch)
       .then(function () {
-        // 保存成功后把「已加载地址」同步为当前值，避免按钮因 addrDirty 常驻
-        loadedAddr.current.baseUrl = baseUrl
-        loadedAddr.current.gatewayUrl = gatewayUrl
         setMessage(t('saved')); setBusy(false); refresh()
       },
       function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
@@ -340,17 +389,61 @@ function HimarketTab(props) {
   const loginUsername = (data && data.loginUsername) || ''
   const allowPassword = !!(data && data.allowPasswordLogin)
   /**
-   * 地址被改动过吗？
-   *
-   * 为什么需要：默认态（未开调试开关）账密框只读、不显示「保存配置」，但
-   * **环境地址（baseUrl / gatewayUrl）是可编辑的** —— 若改完没有保存入口，
-   * 用户会卡在「改得了却存不下」。实测踩过：baseUrl 指向已废弃域名导致一键
-   * 登录报 `fetch failed`，用户在设置页改了地址却无法保存。
-   * 故：仅当地址确实被改过时才放出「保存配置」。
+   * 环境地址来源（2026-09-21 UE 改造）。host 侧 provenance.ts 依据
+   * `<DSH_HOME>/sync-state.json` 里服务端**实际下发**的值判定，而非笼统断言
+   * 「服务端下发」。缺字段（旧版 host）时回退 UNKNOWN，不猜测。
    */
-  const addrDirty = baseUrl !== loadedAddr.current.baseUrl
-    || gatewayUrl !== loadedAddr.current.gatewayUrl
+  const prov = (data && data.addressProvenance) || {}
+  const baseProv = prov.baseUrl || { origin: 'UNKNOWN', serverValue: '', effectiveValue: '', lastSyncAt: '' }
+  const gwProv = prov.gatewayUrl || { origin: 'UNKNOWN', serverValue: '', effectiveValue: '', lastSyncAt: '' }
+  // 「如何修改」说明默认收起：不干扰主流程，但保证用户随时能找到（用户要求"以后再记得"）
+  const [showHowTo, setShowHowTo] = React.useState(false)
   const pending = loginId !== null
+
+  /** 来源 → 本地化标签 / 说明 / 徽标色。 */
+  function originInfo(p) {
+    switch (p.origin) {
+      case 'SERVER': return { label: t('srcServer'), tip: t('srcServerTip'), tone: 'server' }
+      case 'SERVER_DRIFT': return { label: t('srcServerDrift'), tip: t('srcServerTip'), tone: 'warn' }
+      case 'BUILTIN_DEFAULT': return { label: t('srcBuiltin'), tip: t('srcBuiltinTip'), tone: 'muted' }
+      case 'LOCAL': return { label: t('srcLocal'), tip: t('srcLocalTip'), tone: 'muted' }
+      case 'UNSET': return { label: t('srcUnset'), tip: t('srcLocalTip'), tone: 'warn' }
+      default: return { label: t('srcUnknown'), tip: t('srcUnknownTip'), tone: 'muted' }
+    }
+  }
+
+  /** 单行来源徽标 + 悬停说明 + 同步时间。 */
+  function originBadge(p) {
+    const info = originInfo(p)
+    const syncAt = p.lastSyncAt ? '　' + t('syncAtLabel') + p.lastSyncAt.replace('T', ' ').slice(0, 19) : ''
+    return el('span', { className: 'hm_origin', 'data-tone': info.tone, title: info.tip + syncAt }, info.label)
+  }
+
+  /**
+   * 「如何修改」折叠区：把「为什么不让填」和「确实要改怎么办」讲清楚。
+   * 默认收起，点击展开 —— 满足用户「给个说明，以后再记得」的要求，
+   * 又不至于让主界面被长文淹没。
+   */
+  function howToBlock() {
+    return el('div', { className: 'hm_howto' },
+      el('button', {
+        className: 'hm_link', type: 'button',
+        onClick: function () { setShowHowTo(!showHowTo) },
+      }, (showHowTo ? '▾ ' + t('hideHowTo') : '▸ ' + t('showHowTo'))),
+      showHowTo
+        ? el('div', { className: 'hm_howtoBody' },
+          el('p', { className: 'hm_desc' }, el('strong', null, t('howToTitle'))),
+          el('p', { className: 'hm_desc' }, t('howToServer')),
+          el('p', { className: 'hm_desc' }, t('howToDebug')),
+          el('ul', { className: 'hm_howtoList' },
+            el('li', null, el('code', null, 'DSH_HIMARKET_ALLOW_PASSWORD=1'), '　—　', t('howToDebugEnv')),
+            el('li', null, el('code', null, 'himarket.allowPasswordLogin=true'), '　—　', t('howToDebugCfg')),
+          ),
+          el('p', { className: 'hm_desc' }, t('howToWarn')),
+        )
+        : null,
+    )
+  }
 
   function stateLabel() {
     if (state.status === 'loading') return t('stateChecking')
@@ -411,11 +504,15 @@ function HimarketTab(props) {
 
     el('h3', null, t('configTitle')),
     el('div', { className: 'hm_field' },
-      el('label', null, t('baseUrlLabel')),
+      el('label', null, t('baseUrlLabel'), ' ', originBadge(baseProv)),
       el('input', {
         className: 'hm_input', type: 'text', placeholder: t('baseUrlPlaceholder'),
-        value: baseUrl, onChange: (e) => setBaseUrl(e.target.value),
+        value: baseUrl, readOnly: !allowPassword,
+        onChange: allowPassword ? (e) => setBaseUrl(e.target.value) : undefined,
       }),
+      baseUrl.trim() === '' && !allowPassword
+        ? el('p', { className: 'hm_desc' }, t('srcUnset'))
+        : null,
     ),
     el('div', { className: 'hm_field' },
       el('label', null, t('usernameLabel')),
@@ -443,9 +540,18 @@ function HimarketTab(props) {
       ? el('div', { className: 'hm_warn' }, t('debugBadge'), el('br', null), t('debugHint'))
       : el('p', { className: 'hm_hint' }, t('readonlyHint')),
     el('div', { className: 'hm_field' },
-      el('label', null, t('gatewayLabel')),
-      el('input', { className: 'hm_input', type: 'text', placeholder: t('gatewayPlaceholder'), value: gatewayUrl, onChange: (e) => setGatewayUrl(e.target.value) }),
+      el('label', null, t('gatewayLabel'), ' ', originBadge(gwProv)),
+      el('input', {
+        className: 'hm_input', type: 'text', placeholder: t('gatewayPlaceholder'),
+        value: gatewayUrl, readOnly: !allowPassword,
+        onChange: allowPassword ? (e) => setGatewayUrl(e.target.value) : undefined,
+      }),
+      gatewayUrl.trim() === '' && !allowPassword
+        ? el('p', { className: 'hm_desc' }, t('srcUnset'))
+        : null,
     ),
+    // 「如何修改」说明（默认收起）：解释「为什么不让填」+ 确实要改时开什么开关。
+    !allowPassword ? howToBlock() : null,
     el('div', { className: 'hm_row' },
       // 主按钮：未登录→一键登录；已登录→重新登录（G6 过期可自助恢复）
       pending
@@ -455,9 +561,10 @@ function HimarketTab(props) {
       loginState === 'LOGGED_IN' && !pending
         ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doLogout }, t('logout'))
         : null,
-      // 「保存配置」出现条件：调试态（可改账密），或环境地址被改动过。
-      // 默认态未改地址时隐藏 —— 保持「默认只能一键登录」的 UI 收敛（设计文档 G2）。
-      allowPassword || addrDirty
+      // 「保存配置」出现条件：**仅调试态**。
+      // 默认态地址框与账密框均已只读，无任何可保存项 —— 保持「默认只能一键登录」
+      // 的 UI 收敛（设计文档 §5.2 / §13.2）。addrDirty 在默认态恒 false，不再作为条件。
+      allowPassword
         ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: saveConfig }, t('save'))
         : null,
       el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doSync }, busy ? t('syncing') : t('sync')),
