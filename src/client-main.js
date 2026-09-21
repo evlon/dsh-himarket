@@ -30,7 +30,7 @@ const zh = {
   subtitle: '点「一键登录」用公司账号登录，就能在对话里用上公司上架的 MCP 工具和技能。',
   configTitle: '① 连接配置',
   baseUrlLabel: 'HiMarket 地址',
-  baseUrlPlaceholder: '例如 http://market.ai.ict.cmcc（旧环境 http://ai-market.ict.cmcc）',
+  baseUrlPlaceholder: '例如 http://market.ai.ict.cmcc',
   usernameLabel: '账号',
   usernamePlaceholder: '开发者账号用户名',
   passwordLabel: '密码',
@@ -66,7 +66,7 @@ const zh = {
   publish: '发布',
   publishing: '发布中',
   gatewayLabel: '包装层地址',
-  gatewayPlaceholder: '如 http://gateway.ai.ict.cmcc（旧环境 http://ai-job.ict.cmcc），发布与来源标签都走它',
+  gatewayPlaceholder: '如 http://job.ai.ict.cmcc，发布与来源标签都走它',
   sourceOfficial: '企业发布',
   sourceCommunity: '员工共建',
   filterAll: '全部',
@@ -116,7 +116,7 @@ const en = {
   publish: 'Publish',
   publishing: 'Publishing',
   gatewayLabel: 'Gateway URL',
-  gatewayPlaceholder: 'e.g. http://gateway.ai.ict.cmcc (legacy: http://ai-job.ict.cmcc); publishing and source tags go through it',
+  gatewayPlaceholder: 'e.g. http://job.ai.ict.cmcc; publishing and source tags go through it',
   sourceOfficial: 'Official',
   sourceCommunity: 'Community',
   filterAll: 'All',
@@ -196,6 +196,8 @@ function HimarketTab(props) {
   const [password, setPassword] = React.useState('')
   const [gatewayUrl, setGatewayUrl] = React.useState('')
   const [sourceFilter, setSourceFilter] = React.useState('ALL')
+  // 服务端当前生效的地址值：用于判断地址是否被改过（见 addrDirty）。
+  const loadedAddr = React.useRef({ baseUrl: '', gatewayUrl: '' })
   // 一键登录：当前 loginId（非 null 表示等待浏览器授权中）
   const [loginId, setLoginId] = React.useState(null)
   const pollRef = React.useRef(null)
@@ -203,9 +205,9 @@ function HimarketTab(props) {
   const refresh = React.useCallback(function () {
     call('/himarket/state').then(function (data) {
       setState({ status: 'ready', data })
-      if (data && data.baseUrl) setBaseUrl(data.baseUrl)
+      if (data && data.baseUrl) { setBaseUrl(data.baseUrl); loadedAddr.current.baseUrl = data.baseUrl }
       if (data && data.username) setUsername(data.username)
-      if (data && data.gatewayUrl) setGatewayUrl(data.gatewayUrl)
+      if (data && data.gatewayUrl) { setGatewayUrl(data.gatewayUrl); loadedAddr.current.gatewayUrl = data.gatewayUrl }
     }, function (err) {
       setState({ status: 'error', error: err.message })
     })
@@ -289,10 +291,20 @@ function HimarketTab(props) {
 
   function saveConfig() {
     setBusy(true)
-    var patch = { baseUrl, username, password, gatewayUrl }
+    // ⚠️ 默认态（账密只读）**只提交地址字段**，绝不带上 username/password：
+    // 那两个 state 在默认态恒为空串，而 host 见到 string 就写入 —— 一并提交会把
+    // 用户已存的账密兜底清空（实测过 save-config 的写入语义）。
+    var patch = allowPassword
+      ? { baseUrl: baseUrl, username: username, password: password, gatewayUrl: gatewayUrl }
+      : { baseUrl: baseUrl, gatewayUrl: gatewayUrl }
     call('/himarket/save-config', patch)
-      .then(function () { setMessage(t('saved')); setBusy(false); refresh() },
-        function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
+      .then(function () {
+        // 保存成功后把「已加载地址」同步为当前值，避免按钮因 addrDirty 常驻
+        loadedAddr.current.baseUrl = baseUrl
+        loadedAddr.current.gatewayUrl = gatewayUrl
+        setMessage(t('saved')); setBusy(false); refresh()
+      },
+      function (err) { setMessage(t('error') + '：' + err.message); setBusy(false) })
   }
 
   function doSync() {
@@ -327,6 +339,17 @@ function HimarketTab(props) {
   const loginState = (data && data.loginState) || 'NOT_LOGGED'
   const loginUsername = (data && data.loginUsername) || ''
   const allowPassword = !!(data && data.allowPasswordLogin)
+  /**
+   * 地址被改动过吗？
+   *
+   * 为什么需要：默认态（未开调试开关）账密框只读、不显示「保存配置」，但
+   * **环境地址（baseUrl / gatewayUrl）是可编辑的** —— 若改完没有保存入口，
+   * 用户会卡在「改得了却存不下」。实测踩过：baseUrl 指向已废弃域名导致一键
+   * 登录报 `fetch failed`，用户在设置页改了地址却无法保存。
+   * 故：仅当地址确实被改过时才放出「保存配置」。
+   */
+  const addrDirty = baseUrl !== loadedAddr.current.baseUrl
+    || gatewayUrl !== loadedAddr.current.gatewayUrl
   const pending = loginId !== null
 
   function stateLabel() {
@@ -389,7 +412,10 @@ function HimarketTab(props) {
     el('h3', null, t('configTitle')),
     el('div', { className: 'hm_field' },
       el('label', null, t('baseUrlLabel')),
-      el('input', { className: 'hm_input', type: 'text', placeholder: t('baseUrlPlaceholder'), value: baseUrl, onChange: (e) => setBaseUrl(e.target.value) }),
+      el('input', {
+        className: 'hm_input', type: 'text', placeholder: t('baseUrlPlaceholder'),
+        value: baseUrl, onChange: (e) => setBaseUrl(e.target.value),
+      }),
     ),
     el('div', { className: 'hm_field' },
       el('label', null, t('usernameLabel')),
@@ -429,8 +455,9 @@ function HimarketTab(props) {
       loginState === 'LOGGED_IN' && !pending
         ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doLogout }, t('logout'))
         : null,
-      // 调试态才出现「保存配置」（默认态 UI 面收敛为只能一键登录）
-      allowPassword
+      // 「保存配置」出现条件：调试态（可改账密），或环境地址被改动过。
+      // 默认态未改地址时隐藏 —— 保持「默认只能一键登录」的 UI 收敛（设计文档 G2）。
+      allowPassword || addrDirty
         ? el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: saveConfig }, t('save'))
         : null,
       el('button', { className: 'hm_btn', type: 'button', disabled: busy, onClick: doSync }, busy ? t('syncing') : t('sync')),

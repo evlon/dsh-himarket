@@ -12,8 +12,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import tls from 'node:tls'
 
-import { pkceChallenge, buildAuthUrl, idTokenClaim, SsoLoginManager } from '../lib/sso-login.js'
+import { pkceChallenge, buildAuthUrl, idTokenClaim, SsoLoginManager, describeFetchError, ensureInternalCaTrusted } from '../lib/sso-login.js'
 import { loginStateOf } from '../lib/settings.js'
 import { allowPasswordLogin, resolveSsoIssuer, resolveSsoClientId, DEFAULT_SSO_ISSUER, DEFAULT_SSO_CLIENT_ID } from '../lib/domain.js'
 
@@ -176,4 +177,63 @@ test('SsoLoginManager：takeToken 对未成功会话返回空串（token 不外�
   } finally {
     mgr.dispose()
   }
+})
+
+// ── describeFetchError：把 undici 的笼统 `fetch failed` 展开成可排障原因 ──
+// 实测踩过：baseUrl 指向已废弃域名（NXDOMAIN），界面只有一句「fetch failed」，
+// 用户完全无法判断是地址写错还是服务没起。故此处必须展开 error.cause。
+
+test('describeFetchError：展开 ENOTFOUND 并给出「域名解析失败」提示', () => {
+  const err = new TypeError('fetch failed')
+  err.cause = Object.assign(new Error('getaddrinfo ENOTFOUND ai-market.ict.cmcc'), { code: 'ENOTFOUND' })
+  const msg = describeFetchError(err, 'http://ai-market.ict.cmcc/api/v1/x')
+  assert.match(msg, /ENOTFOUND/u, '必须包含真实错误码')
+  assert.match(msg, /ai-market\.ict\.cmcc/u, '必须包含目标地址')
+  assert.match(msg, /域名解析失败/u, '必须给出可操作提示')
+})
+
+test('describeFetchError：区分 ECONNREFUSED / TLS / 超时', () => {
+  const mk = (code, message) => {
+    const e = new TypeError('fetch failed')
+    e.cause = Object.assign(new Error(message), { code })
+    return e
+  }
+  assert.match(describeFetchError(mk('ECONNREFUSED', 'connect ECONNREFUSED'), 'http://x'), /连接被拒绝/u)
+  assert.match(describeFetchError(mk('CERT_HAS_EXPIRED', 'certificate has expired'), 'https://x'), /证书/u)
+  assert.match(describeFetchError(mk('UND_ERR_CONNECT_TIMEOUT', 'connect timeout'), 'http://x'), /超时/u)
+})
+
+test('describeFetchError：无 cause 时也不崩，回退原始信息', () => {
+  const msg = describeFetchError(new Error('boom'), 'http://x')
+  assert.match(msg, /boom/u)
+  assert.match(msg, /http:\/\/x/u)
+})
+
+// ---------- 内网自签 CA 信任（防复发：2026-09-21 线上故障） ----------
+
+/**
+ * 事故：`auth.ict.cmcc` 证书链根为企业自签（issuer = ICT Internal AI Root CA），
+ * 不在 Node 内置 CA 库 → TLS 失败 → undici 只报 `fetch failed`，界面无从排障。
+ *
+ * 依赖环境变量 `NODE_USE_SYSTEM_CA=1` 不可靠（pm2 / 计划任务 / 父进程环境各异），
+ * 故改为插件代码级注入系统 CA。这组测试锁住该行为，防止被误删。
+ */
+test('ensureInternalCaTrusted：返回布尔且可重复调用（幂等，不抛错）', () => {
+  const first = ensureInternalCaTrusted()
+  assert.equal(typeof first, 'boolean', '必须返回布尔值')
+  // 幂等：再次调用结果一致，且不得抛错
+  assert.equal(ensureInternalCaTrusted(), first, '重复调用结果应一致')
+})
+
+test('ensureInternalCaTrusted：注入后全局信任链包含系统 CA（含企业自签根）', () => {
+  const applied = ensureInternalCaTrusted()
+  if (!applied) {
+    // Node 版本不支持 tls.getCACertificates/setDefaultCACertificates —— 降级不算失败，
+    // 但必须确认当前 Node 支持（本项目要求 Node 24+）。
+    assert.fail('当前 Node 不支持系统 CA API，插件将无法在内网环境完成登录')
+  }
+  const trusted = tls.getCACertificates('default')
+  assert.ok(Array.isArray(trusted) && trusted.length > 0, '默认信任链不应为空')
+  const system = tls.getCACertificates('system')
+  assert.ok(system.length > 0, '系统 CA 库应可读取（否则内网自签根无法被信任）')
 })

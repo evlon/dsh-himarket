@@ -25,6 +25,49 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import tls from 'node:tls'
+
+/**
+ * 确保内网自签 CA 被信任 —— **不依赖 `NODE_USE_SYSTEM_CA` 环境变量**。
+ *
+ * 为什么必须做（2026-09-21 实测确证）：
+ *   `auth.ict.cmcc` / `market.ai.ict.cmcc` 的证书链根是**企业自签根**
+ *   （issuer = `ICT Internal AI Root CA`），不在 Node 内置 CA 库里。Node 默认
+ *   只用内置库 → TLS 校验失败 → undici 统一报 `TypeError: fetch failed`，
+ *   真实原因 `SELF_SIGNED_CERT_IN_CHAIN` 被吞掉，界面只剩「fetch failed」。
+ *
+ *   Node 提供的开关是环境变量 `NODE_USE_SYSTEM_CA=1`（改用 Windows 证书库）。
+ *   但**环境变量不可靠**：进程可能由 pm2 / 计划任务 / 父进程以不同的环境启动，
+ *   用户机器上也未必设置过。实测就出现过「同一台机器，命令行能通、DSH 进程
+ *   报 fetch failed」。
+ *
+ * 因此改为**代码级修复**：把系统 CA 库并入默认信任链。这样无论进程环境如何，
+ * 只要操作系统信任该企业根证书（内网机器必然已装），插件就能连通。
+ *
+ * 幂等且容错：Node 版本不支持该 API、或系统库读取失败时，静默跳过 ——
+ * 保持原有行为（不因为加固而引入新的启动失败）。
+ */
+let caPatched = false
+export function ensureInternalCaTrusted(): boolean {
+  if (caPatched) return true
+  try {
+    const get = (tls as unknown as { getCACertificates?: (k: string) => unknown }).getCACertificates
+    const set = (tls as unknown as { setDefaultCACertificates?: (c: string[]) => void }).setDefaultCACertificates
+    if (typeof get !== 'function' || typeof set !== 'function') return false
+    const system = get('system')
+    const bundled = get('bundled')
+    const merged = [
+      ...(Array.isArray(system) ? (system as string[]) : []),
+      ...(Array.isArray(bundled) ? (bundled as string[]) : []),
+    ]
+    if (merged.length === 0) return false
+    set(merged)
+    caPatched = true
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * 回调端口基数。Keycloak 的 `matrix-twin-activation` 已注册
@@ -140,6 +183,40 @@ function asRecord(v: unknown): Record<string, unknown> {
 /** 取字符串字段（非字符串一律空串）。 */
 function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
+}
+
+/**
+ * 把 fetch 的笼统 `fetch failed` 展开成**可排障的真实原因**。
+ *
+ * undici 把所有网络层错误统一包成 `TypeError: fetch failed`，真实原因藏在
+ * `error.cause`（ENOTFOUND / ECONNREFUSED / 证书错误…）。不展开的话界面上只有
+ * 一句「fetch failed」，用户无法判断是地址写错、DNS 不通还是服务没起。
+ *
+ * 实测踩过：`himarket.baseUrl` 指向已废弃域名 `ai-market.ict.cmcc`（NXDOMAIN），
+ * 回调页只显示「fetch failed」，根因完全不可见 —— 故此处必须展开并给出提示。
+ */
+export function describeFetchError(error: unknown, target: string): string {
+  const parts: string[] = []
+  let cur: unknown = error
+  for (let i = 0; i < 4 && cur !== undefined && cur !== null; i += 1) {
+    const rec = asRecord(cur)
+    const code = str(rec['code'])
+    const message = cur instanceof Error ? cur.message : str(rec['message'])
+    const piece = code !== '' ? `${code}${message !== '' ? ` ${message}` : ''}` : message
+    if (piece !== '' && !parts.includes(piece)) parts.push(piece)
+    cur = rec['cause']
+  }
+  const detail = parts.join(' ← ') || String(error)
+  const hint = /ENOTFOUND|EAI_AGAIN/u.test(detail)
+    ? '。域名解析失败：请检查「HiMarket 地址」是否写错，或该域名是否已废弃'
+    : /ECONNREFUSED/u.test(detail)
+      ? '。连接被拒绝：目标服务未启动或端口不对'
+      : /CERT|SSL|TLS/iu.test(detail)
+        ? '。TLS/证书校验失败'
+        : /ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/u.test(detail)
+          ? '。连接超时：网络不通或被防火墙拦截'
+          : ''
+  return `无法访问 ${target}（${detail}）${hint}`
 }
 
 /** HTML 转义（错误信息可能含服务端返回内容，防注入）。 */
@@ -358,6 +435,22 @@ function listenOnFreePort(): Promise<{ server: Server; port: number }> {
   })
 }
 
+/**
+ * fetch 包装：网络层失败时抛出**展开后**的可读错误（见 describeFetchError）。
+ * HTTP 错误状态（4xx/5xx）不在此处理 —— 由调用方按业务语义判断。
+ *
+ * 调用前先确保内网自签 CA 已并入信任链（见 ensureInternalCaTrusted）——
+ * 否则在内网环境下会以 `fetch failed` 的形式失败。
+ */
+async function fetchOrExplain(url: string, init: RequestInit): Promise<Response> {
+  ensureInternalCaTrusted()
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    throw new Error(describeFetchError(error, url))
+  }
+}
+
 /** 用授权码换 id_token（public client + PKCE，**不带 client_secret**）。 */
 async function exchangeCode(
   cfg: SsoConfig,
@@ -373,7 +466,7 @@ async function exchangeCode(
     code_verifier: verifier,
   })
   const url = `${cfg.issuer.trim().replace(/\/+$/u, '')}/protocol/openid-connect/token`
-  const res = await fetch(url, {
+  const res = await fetchOrExplain(url, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -411,7 +504,7 @@ async function exchangeHimarketToken(
     grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
     assertion: idToken,
   })
-  const res = await fetch(`${base}/api/v1/developers/oauth2/token`, {
+  const res = await fetchOrExplain(`${base}/api/v1/developers/oauth2/token`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

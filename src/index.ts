@@ -30,7 +30,7 @@ import {
   resolveSsoIssuer,
   resolveSsoClientId,
 } from './domain.js'
-import { SsoLoginManager } from './sso-login.js'
+import { SsoLoginManager, ensureInternalCaTrusted } from './sso-login.js'
 import type { SsoConfig } from './sso-login.js'
 
 export const name = 'himarket'
@@ -66,6 +66,11 @@ interface BridgeState {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  // 内网自签 CA 加固：在插件入口注入一次，覆盖本插件**所有** fetch 调用点
+  // （sso-login / himarket-client / 本文件的网关调用）。不依赖
+  // NODE_USE_SYSTEM_CA 环境变量 —— 进程环境不可靠，详见 sso-login.ts。
+  ensureInternalCaTrusted()
+
   const baseUrl = ctx.baseUrl ?? 'file:///'
   // 域名默认值集中走 domain.ts（默认新 K8S 环境 *.ai.ict.cmcc，可经环境变量/行 config
   // 切回旧环境 *.ict.cmcc）；行 config 显式给值则优先。
