@@ -154,45 +154,83 @@ export function attachSettings(
   current(): HimarketSettings
   save(patch: Partial<HimarketSettings>): Promise<void>
   onChange(cb: () => void): () => void
+  onReady(cb: () => void): void
 } {
   let resolved: () => HimarketSettings = () => fallback
   let save: (patch: Partial<HimarketSettings>) => Promise<void> = async () => {}
   let onChange: (cb: () => void) => () => void = () => () => {}
 
-  // settings 服务是异步 init 的，apply 时可能尚未就绪；用 ctx.inject 等它就绪。
-  ctx.inject(['settings'], (scope) => {
-    const settings = scope.get('settings') as SettingsLike | undefined
-    if (settings === undefined) {
-      ctx.logger.warn('[dsh-himarket] settings service unavailable, using cordis.patch.yml row config')
+  // settings 服务是**异步** init 的：apply() 返回时 ctx.inject 回调可能尚未执行，
+  // 此刻 current() 只能读到 fallback（token/username/password 全空）。
+  // 启动恢复若在 apply() 同步时刻读 current() 并据此判门禁，条件恒假 → 恢复永不执行
+  // （2026-09-22 修复的真实 bug：3090 表现为 mcpServers=[] 且日志零输出）。
+  // onReady 把「句柄已定」这一时刻显式暴露给调用方，恢复逻辑改为事件驱动。
+  let settled = false
+  const pendingReady: Array<() => void> = []
+  const fireSettled = (): void => {
+    if (settled) return
+    settled = true
+    for (const cb of pendingReady.splice(0)) {
+      try {
+        cb()
+      } catch (error) {
+        ctx.logger.warn('[dsh-himarket] onReady callback failed: %s', messageOf(error))
+      }
+    }
+  }
+  /** 句柄已定则立即执行，否则入队等待（成功与降级两条路径都会 fireSettled）。 */
+  const onReady = (cb: () => void): void => {
+    if (settled) {
+      try {
+        cb()
+      } catch (error) {
+        ctx.logger.warn('[dsh-himarket] onReady callback failed: %s', messageOf(error))
+      }
       return
     }
+    pendingReady.push(cb)
+  }
+
+  // settings 服务是异步 init 的，apply 时可能尚未就绪；用 ctx.inject 等它就绪。
+  ctx.inject(['settings'], (scope) => {
     try {
-      const Schema = requireOfficial('@deepseek-ai/schemastery', baseUrl) as SchemasteryLike
-      const schema = Schema.object({
-        baseUrl: Schema.string().default(''),
-        username: Schema.string().default(''),
-        password: Schema.string().default(''),
-        token: Schema.string().default(''),
-        adminToken: Schema.string().default(''),
-        adminUsername: Schema.string().default('admin'),
-        adminPassword: Schema.string().default(''),
-        portalId: Schema.string().default(''),
-        gatewayUrl: Schema.string().default(''),
-        skillInstallDir: Schema.string().default(''),
-        // 一键登录（SSO）参数：空则回退 domain.ts 内置默认。
-        ssoIssuer: Schema.string().default(''),
-        ssoClientId: Schema.string().default(''),
-        // 调试开关：默认 false（账密框只读，只能一键登录）。
-        allowPasswordLogin: Schema.boolean().default(false),
-      })
-      const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
-      resolved = () => scopeHandle.get()
-      save = async (patch) => {
-        await scopeHandle.update(patch)
+      const settings = scope.get('settings') as SettingsLike | undefined
+      if (settings === undefined) {
+        ctx.logger.warn('[dsh-himarket] settings service unavailable, using cordis.patch.yml row config')
+        return
       }
-      onChange = (cb) => scopeHandle.watch(() => { cb() })
-    } catch (error) {
-      ctx.logger.warn('[dsh-himarket] settings registration failed, falling back to row config: %s', messageOf(error))
+      try {
+        const Schema = requireOfficial('@deepseek-ai/schemastery', baseUrl) as SchemasteryLike
+        const schema = Schema.object({
+          baseUrl: Schema.string().default(''),
+          username: Schema.string().default(''),
+          password: Schema.string().default(''),
+          token: Schema.string().default(''),
+          adminToken: Schema.string().default(''),
+          adminUsername: Schema.string().default('admin'),
+          adminPassword: Schema.string().default(''),
+          portalId: Schema.string().default(''),
+          gatewayUrl: Schema.string().default(''),
+          skillInstallDir: Schema.string().default(''),
+          // 一键登录（SSO）参数：空则回退 domain.ts 内置默认。
+          ssoIssuer: Schema.string().default(''),
+          ssoClientId: Schema.string().default(''),
+          // 调试开关：默认 false（账密框只读，只能一键登录）。
+          allowPasswordLogin: Schema.boolean().default(false),
+        })
+        const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
+        resolved = () => scopeHandle.get()
+        save = async (patch) => {
+          await scopeHandle.update(patch)
+        }
+        onChange = (cb) => scopeHandle.watch(() => { cb() })
+      } catch (error) {
+        ctx.logger.warn('[dsh-himarket] settings registration failed, falling back to row config: %s', messageOf(error))
+      }
+    } finally {
+      // 成功与降级两条路径都要触发：语义是「settings 句柄已定」，
+      // 由调用方用 hasCredentials 自行判定是否值得恢复（单一路径，无特例）。
+      fireSettled()
     }
   })
 
@@ -200,6 +238,7 @@ export function attachSettings(
     current: () => resolved(),
     save: (patch) => save(patch),
     onChange: (cb) => onChange(cb),
+    onReady,
   }
 }
 

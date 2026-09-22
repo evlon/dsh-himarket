@@ -60,6 +60,14 @@ interface BridgeState {
   publishedSkills: PublishedSkill[]
   installedSkills: string[]
   lastError: string
+  /**
+   * 上次「启动/热加载恢复」的完成时刻（ISO 8601；空串=从未尝试）。
+   *
+   * 为什么需要：mcpServers=[] 与 activeMcpNames=[] 有两种截然不同的成因 ——
+   * 「恢复根本没执行」（bug）与「恢复执行了但确实没订阅」（正常）。只看数组长度
+   * 无法区分，会把 bug 误判为正常。此字段让二者可分辨（2026-09-22 修复的回归特征）。
+   */
+  lastRestoreAt: string
   /** 设置页登录态（设计文档 §5.1 状态机）。 */
   loginState: LoginState
   /** 展示用登录用户名（token 里的 preferred_username，或手工账密）。 */
@@ -127,6 +135,8 @@ export function apply(ctx: Context, config: Config): void {
   let publishedSkills: PublishedSkill[] = []
   let installedSkills = new Set<string>()
   let lastError = ''
+  /** 上次恢复完成时刻（见 BridgeState.lastRestoreAt）。 */
+  let lastRestoreAt = ''
   /** 上次构建 client 时的凭据指纹；变化则丢弃缓存的 client。 */
   let clientFingerprint = ''
 
@@ -152,10 +162,20 @@ export function apply(ctx: Context, config: Config): void {
 
   // 外部写入（启动器「一键登录」写 settings.yaml）触发热加载 → 立即丢弃缓存 client，
   // 使下一次 sync/install 用上新 token，无需重启 DSH。
+  //
+  // 同时触发一次「恢复」：启动器一键登录是**外部进程**写 settings.yaml，若只丢缓存
+  // 不恢复，MCP 工具要等用户手点同步或重启才挂载 —— 「登录即可用」这条主路径会断。
+  // 1s 防抖合并同一次登录的多次字段写入（token 与 username 分两次 save）。
+  let restoreTimer: ReturnType<typeof setTimeout> | undefined
   ctx.effect(
     () => settings.onChange(() => {
       client = undefined
       clientFingerprint = ''
+      if (restoreTimer !== undefined) clearTimeout(restoreTimer)
+      restoreTimer = setTimeout(() => {
+        restoreTimer = undefined
+        void restoreFromSettings()
+      }, 1000)
     }),
     'himarket.settings-watch',
   )
@@ -396,6 +416,7 @@ export function apply(ctx: Context, config: Config): void {
       publishedSkills,
       installedSkills: [...installedSkills],
       lastError,
+      lastRestoreAt,
       loginState: loginStateOf(s, allowPwd),
       loginUsername: s.username,
       allowPasswordLogin: allowPwd,
@@ -406,25 +427,65 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
-  // 启动时：若已有凭证，异步尝试恢复（不阻塞启动）。
-  const boot = settings.current()
-  if (boot.baseUrl.trim() !== '' && boot.username.trim() !== '' && boot.password.trim() !== '') {
-    void (async () => {
-      try {
-        client = buildClient()!
-        mcpManager = new McpManager(ctx, baseUrl)
-        const { mcpServers, authHeaders } = await client.listSubscribedMcps()
-        subscribedMcps = mcpServers
-        publishedSkills = await client.listPublishedSkills()
-        await mcpManager.reconcile(mcpServers, authHeaders)
-        installedSkills = await refreshInstalledSkills()
-        ctx.logger.info('[dsh-himarket] 启动恢复完成：%d 个 MCP、%d 个技能', mcpServers.length, publishedSkills.length)
-      } catch (error) {
-        ctx.logger.warn('[dsh-himarket] 启动恢复失败（将静默降级）：%s', error instanceof Error ? error.message : String(error))
-        lastError = error instanceof Error ? error.message : String(error)
+  /**
+   * 从当前 settings 恢复：拉订阅清单 → 建 MCP fiber → 刷新已装技能。
+   *
+   * 触发时机（三处，共用本函数 + restoring 标志串行化）：
+   *   ① settings 句柄就绪（onReady）—— 启动恢复；
+   *   ② settings 热加载（onChange，1s 防抖）—— 启动器一键登录后免重启；
+   *   ③ 用户在设置页点「同步」（走 sync()，与本函数幂等）。
+   *
+   * ⚠️ 为什么不能沿用旧的「apply() 同步读 settings 判门禁」写法：
+   * attachSettings 用 ctx.inject 异步等 settings 就绪，apply() 返回时 current() 只
+   * 读到 fallback（token/username/password 全空）→ 门禁恒假 → 恢复永不执行。
+   * 且判定必须用 hasCredentials（兼容 v0.1.7 起的 token-only SSO，不写 password）。
+   */
+  let restoring = false
+  async function restoreFromSettings(): Promise<void> {
+    if (restoring) return
+    const s = settings.current()
+    if (!hasCredentials(s)) return
+    restoring = true
+    try {
+      const c = buildClient()
+      if (c === undefined) return
+      client = c
+      if (mcpManager === undefined) mcpManager = new McpManager(ctx, baseUrl)
+      const { mcpServers, authHeaders } = await c.listSubscribedMcps()
+      subscribedMcps = mcpServers
+      publishedSkills = await c.listPublishedSkills()
+      const report = await mcpManager.reconcile(mcpServers, authHeaders)
+      installedSkills = await refreshInstalledSkills()
+      // ⚠️ 必须如实上报连接失败：reconcile 把单个 MCP 的连接异常收进 errors 而不抛出，
+      // 若这里无条件清空 lastError，则「连上了」与「连接失败」在 /state 里无法区分
+      // （lastError 为空会被误读为健康）。与 sync() 的处理保持一致。
+      if (report.errors.length > 0) {
+        lastError = `MCP 连接失败：${report.errors.join('；')}`
+        ctx.logger.warn('[dsh-himarket] 启动恢复部分失败：%s', lastError)
+      } else {
+        lastError = ''
       }
-    })()
+      lastRestoreAt = new Date().toISOString()
+      ctx.logger.info(
+        '[dsh-himarket] 启动恢复完成：%d 个 MCP（新增 %d、移除 %d）、%d 个技能',
+        mcpServers.length,
+        report.added.length,
+        report.removed.length,
+        publishedSkills.length,
+      )
+    } catch (error) {
+      ctx.logger.warn('[dsh-himarket] 启动恢复失败（将静默降级）：%s', error instanceof Error ? error.message : String(error))
+      lastError = error instanceof Error ? error.message : String(error)
+      lastRestoreAt = new Date().toISOString()
+    } finally {
+      restoring = false
+    }
   }
+
+  // 启动恢复：等 settings 句柄就绪后异步尝试（不阻塞启动）。
+  settings.onReady(() => {
+    void restoreFromSettings()
+  })
 
   void registerHimarketTools(ctx, baseUrl, {
     sync,
@@ -611,6 +672,8 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => {
     return () => {
+      if (restoreTimer !== undefined) clearTimeout(restoreTimer)
+      restoreTimer = undefined
       mcpManager?.dispose()
       mcpManager = undefined
       client = undefined
