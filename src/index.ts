@@ -111,6 +111,8 @@ export function apply(ctx: Context, config: Config): void {
     ssoClientId: '',
     // 调试开关默认关闭：账密框只读，只能一键登录（设计文档 §5.2）。
     allowPasswordLogin: false,
+    // 待预装岗位清单（launcher 下发，一次性预装后清空）。
+    preinstallJobs: '',
   }
 
   const settings = attachSettings(ctx, fallback, baseUrl)
@@ -441,6 +443,60 @@ export function apply(ctx: Context, config: Config): void {
    * 且判定必须用 hasCredentials（兼容 v0.1.7 起的 token-only SSO，不写 password）。
    */
   let restoring = false
+  /**
+   * 执行「预装岗位」：launcher 下发 jobPresets 清单（JSON 数组字符串，存 settings 的
+   * preinstallJobs），凭据就绪后逐个按 name 找 productId → installSkill 落盘，完成后清空
+   * preinstallJobs（一次性预装，防重启重放）。单个岗位失败不阻断其余，仅记日志。
+   */
+  async function runPreinstallJobs(): Promise<void> {
+    const raw = settings.current().preinstallJobs.trim()
+    if (raw === '') return
+    let names: string[] = []
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        names = parsed.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
+      }
+    } catch {
+      ctx.logger.warn('[dsh-himarket] preinstallJobs 不是合法 JSON 数组，忽略：%s', raw.slice(0, 80))
+      await settings.save({ preinstallJobs: '' }).catch(() => {})
+      return
+    }
+    if (names.length === 0) {
+      await settings.save({ preinstallJobs: '' }).catch(() => {})
+      return
+    }
+    const c = client ?? buildClient()
+    if (c === undefined) return
+    // 未同步过则先拉一次市场清单，供 name → productId 映射。
+    if (publishedSkills.length === 0) {
+      try {
+        publishedSkills = await c.listPublishedSkills()
+      } catch { /* 拉取失败则逐名尝试，找不到会跳过 */ }
+    }
+    const okIds: string[] = []
+    for (const name of names) {
+      const target = publishedSkills.find((s) => s.productId === name || s.name === name)
+      if (target === undefined) {
+        ctx.logger.warn('[dsh-himarket] 预装岗位「%s」在市场清单中未找到，跳过', name)
+        continue
+      }
+      try {
+        const result = await installSkill(c, target.productId, skillRoot())
+        installedSkills.add(result.name)
+        okIds.push(name)
+        ctx.logger.info('[dsh-himarket] 预装岗位「%s」已落盘：%s', name, result.dir)
+      } catch (error) {
+        ctx.logger.warn('[dsh-himarket] 预装岗位「%s」失败：%s', name, error instanceof Error ? error.message : String(error))
+      }
+    }
+    // 无论成败，清空清单（一次性预装；失败项由用户手点同步/安装补救）。
+    await settings.save({ preinstallJobs: '' }).catch(() => {})
+    if (okIds.length > 0) {
+      ctx.logger.info('[dsh-himarket] 预装岗位完成：%d/%d（%s）', okIds.length, names.length, okIds.join('、'))
+    }
+  }
+
   async function restoreFromSettings(): Promise<void> {
     if (restoring) return
     const s = settings.current()
@@ -473,6 +529,8 @@ export function apply(ctx: Context, config: Config): void {
         report.removed.length,
         publishedSkills.length,
       )
+      // 恢复成功后执行一次性预装岗位（launcher 下发清单，凭据就绪才可行）。
+      void runPreinstallJobs()
     } catch (error) {
       ctx.logger.warn('[dsh-himarket] 启动恢复失败（将静默降级）：%s', error instanceof Error ? error.message : String(error))
       lastError = error instanceof Error ? error.message : String(error)

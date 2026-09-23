@@ -55,6 +55,12 @@ export interface HimarketSettings {
    * 与环境变量 DSH_HIMARKET_ALLOW_PASSWORD 取或（见 domain.ts 的 allowPasswordLogin）。
    */
   allowPasswordLogin: boolean
+  /**
+   * 待预装的岗位技能名清单（JSON 数组字符串，如 `["pm","dev","qa"]`）。
+   * 由启动器（launcher）同步服务端 jobPresets 下发写入；插件在凭据就绪后逐个
+   * 下载并落盘到 .agent-presets/，完成后清空本字段（一次性预装，防重启重放）。
+   */
+  preinstallJobs: string
 }
 
 /** Settings namespace name. */
@@ -217,6 +223,8 @@ export function attachSettings(
           ssoClientId: Schema.string().default(''),
           // 调试开关：默认 false（账密框只读，只能一键登录）。
           allowPasswordLogin: Schema.boolean().default(false),
+          // 待预装岗位技能名清单（JSON 数组字符串，launcher 下发，一次性预装后清空）。
+          preinstallJobs: Schema.string().default(''),
         })
         const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
         resolved = () => scopeHandle.get()
