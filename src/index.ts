@@ -113,6 +113,8 @@ export function apply(ctx: Context, config: Config): void {
     allowPasswordLogin: false,
     // 待预装岗位清单（launcher 下发，一次性预装后清空）。
     preinstallJobs: '',
+    // 默认岗位 id（launcher 激活向导「选岗位」写入）。
+    defaultJob: '',
   }
 
   const settings = attachSettings(ctx, fallback, baseUrl)

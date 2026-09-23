@@ -61,6 +61,13 @@ export interface HimarketSettings {
    * 下载并落盘到 .agent-presets/，完成后清空本字段（一次性预装，防重启重放）。
    */
   preinstallJobs: string
+  /**
+   * 默认岗位 id（单个字符串，如 "pm"）：分身激活后**默认以哪个岗位人设开工**。
+   * 由启动器（launcher）激活向导「选岗位」步骤写入；与 preinstallJobs（预装哪些）
+   * 是两回事。本轮仅落盘供后续使用，插件侧暂不接「启动时自动切换岗位」逻辑。
+   * 空 = 未指定默认岗位。
+   */
+  defaultJob: string
 }
 
 /** Settings namespace name. */
@@ -225,6 +232,8 @@ export function attachSettings(
           allowPasswordLogin: Schema.boolean().default(false),
           // 待预装岗位技能名清单（JSON 数组字符串，launcher 下发，一次性预装后清空）。
           preinstallJobs: Schema.string().default(''),
+          // 默认岗位 id（launcher 激活向导「选岗位」写入，供后续「默认以何岗位开工」用）。
+          defaultJob: Schema.string().default(''),
         })
         const scopeHandle = settings.register<HimarketSettings>(NAMESPACE, schema, { base: fallback })
         resolved = () => scopeHandle.get()
